@@ -1,0 +1,12 @@
+# k3s single-node config. Installed to /etc/rancher/k3s/config.yaml
+# by infra/hetzner-init.sh. Traefik is disabled because Caddy (compose)
+# owns ports 80/443 on this box.
+disable:
+  - traefik
+write-kubeconfig-mode: "0644"
+data-dir: /data/k3s
+cluster-cidr: 10.42.0.0/16
+service-cidr: 10.43.0.0/16
+node-label:
+  - "workload=lab"
+  - "hv=kvm"
