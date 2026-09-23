@@ -33,7 +33,7 @@ if ! grep -Eq 'vmx|svm' /proc/cpuinfo; then
     log "WARN: no vmx/svm flags — gVisor-only mode, VM labs stay unschedulable"
     NO_KVM=1
   else
-    die "no vmx/svm flags — enable VT-x/AMD-V (Hetzner dedicated: support ticket for BIOS check; Cloud vServer: nested virt unavailable, use ALLOW_NO_KVM=1 or move to dedicated — see infra/HETZNER.md §7)"
+    die "no vmx/svm flags — enable VT-x/AMD-V (Hetzner dedicated: support ticket for BIOS check; Cloud vServer: nested virt unavailable, use ALLOW_NO_KVM=1 or move to dedicated — see infra/HETZNER.md §8)"
   fi
 fi
 apt-get update -qq
