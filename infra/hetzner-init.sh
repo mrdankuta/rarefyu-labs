@@ -15,6 +15,10 @@ SSH_PORT="${SSH_PORT:-22}"
 K3S_VERSION="${K3S_VERSION:-v1.31.4+k3s1}"
 NODE_IP="${NODE_IP:-$(hostname -I | awk '{print $1}')}"
 REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/mrdankuta/rarefyu-labs/main}"
+# ALLOW_NO_KVM=1 continues without hardware virtualization (Hetzner Cloud
+# vServer or VT-x disabled). gVisor dense labs still work; KubeVirt/Kata
+# VM labs stay unschedulable until a KVM host is used. See HETZNER.md §7.
+ALLOW_NO_KVM="${ALLOW_NO_KVM:-0}"
 
 log() { echo "==> $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -25,7 +29,12 @@ grep -q 'Ubuntu.*24\.04' /etc/os-release || log "WARN: not Ubuntu 24.04, continu
 # --- 1. KVM -----------------------------------------------------------------
 log "checking hardware virtualization"
 if ! grep -Eq 'vmx|svm' /proc/cpuinfo; then
-  die "no vmx/svm flags — enable VT-x/AMD-V (Hetzner: ask support for BIOS check)"
+  if [ "${ALLOW_NO_KVM}" = "1" ]; then
+    log "WARN: no vmx/svm flags — gVisor-only mode, VM labs stay unschedulable"
+    NO_KVM=1
+  else
+    die "no vmx/svm flags — enable VT-x/AMD-V (Hetzner dedicated: support ticket for BIOS check; Cloud vServer: nested virt unavailable, use ALLOW_NO_KVM=1 or move to dedicated — see infra/HETZNER.md §7)"
+  fi
 fi
 apt-get update -qq
 apt-get install -y -qq cpu-checker curl ca-certificates gnupg jq
@@ -34,8 +43,15 @@ if [ ! -e /dev/kvm ]; then
   modprobe kvm_intel 2>/dev/null || true
   modprobe kvm_amd 2>/dev/null || true
 fi
-[ -e /dev/kvm ] || die "/dev/kvm missing after modprobe"
-log "KVM OK: $(ls -l /dev/kvm)"
+if [ ! -e /dev/kvm ]; then
+  if [ "${ALLOW_NO_KVM}" = "1" ]; then
+    log "WARN: /dev/kvm absent — gVisor-only mode"
+  else
+    die "/dev/kvm missing after modprobe"
+  fi
+else
+  log "KVM OK: $(ls -l /dev/kvm)"
+fi
 
 # --- 2. /data ---------------------------------------------------------------
 log "preparing ${DATA_MOUNT}"
@@ -109,6 +125,9 @@ apt-get update -qq && apt-get install -y -qq trivy
 trivy --version
 
 # --- 7. Summary ----------------------------------------------------------------
+if [ "${ALLOW_NO_KVM}" = "1" ] && [ ! -e /dev/kvm ]; then
+  log "MODE: gVisor-only (no KVM). Dense labs work; KubeVirt/Kata need a KVM host."
+fi
 log "DONE. Verify with:"
 echo "  k3s kubectl get nodes -o wide"
 echo "  ls -l /dev/kvm && df -h ${DATA_MOUNT} && ufw status"

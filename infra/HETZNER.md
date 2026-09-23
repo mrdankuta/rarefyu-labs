@@ -81,9 +81,33 @@ passes end to end.
 
 | Symptom | Fix |
 |---|---|
-| `no vmx/svm flags` | BIOS VT off — Hetzner support ticket |
+| `no vmx/svm flags` | Diagnose dedicated-vs-cloud first — see §8 |
 | Locked out after UFW | KVM console via Robot, `ufw allow <port>/tcp` |
 | k3s CrashLoop, port 80/443 busy | Traefik not disabled — check `/etc/rancher/k3s/config.yaml`, restart k3s |
 | Pod can't pull `registry.labs.local` | Re-run init (CoreDNS block), `kubectl -n kube-system rollout restart deploy/coredns` |
 | Disk full on `/` | Docker + k3s data live under `/data` by config; check `du -sh /var/lib/docker` for strays |
 | Second server | Stop — that's slice 10, `infra/join-node.sh` |
+
+## 8. No vmx/svm flags — dedicated or cloud?
+
+Run on the box:
+
+```sh
+lscpu | grep -E 'Model name|Hypervisor vendor'
+systemd-detect-virt
+dmidecode -s system-product-name 2>/dev/null
+grep -c processor /proc/cpuinfo
+```
+
+- **`Hypervisor vendor: KVM` / product `KVM` / `Hetzner vServer`:**
+  this is a Cloud VM, not dedicated iron. Hetzner Cloud does not expose
+  nested virtualization, so `/dev/kvm` can never appear here. Two paths:
+  (a) order a **dedicated** AX server for the full platform (recommended —
+  the plan assumes KVM from slice 3 onward); (b) keep this box for dense
+  labs only with degraded mode:
+  `curl -sfL .../hetzner-init.sh | sudo ALLOW_NO_KVM=1 bash -s --`
+  gVisor (`runsc`) is pure userspace and works without KVM; KubeVirt/Kata
+  stay unschedulable until you point the platform at a KVM host.
+- **No hypervisor line, bare-metal product name (e.g. Supermicro):**
+  genuine dedicated box with VT-x disabled — open a Hetzner support
+  ticket asking for VT-x/AMD-V enabled in BIOS, then re-run init.
