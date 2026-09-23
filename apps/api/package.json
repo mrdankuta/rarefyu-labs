@@ -1,0 +1,21 @@
+{
+  "name": "@rarefyu/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot ./src/index.ts",
+    "start": "bun ./src/index.ts",
+    "build": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@rarefyu/lab-sdk": "workspace:*",
+    "hono": "^4.6.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "bun-types": "latest",
+    "typescript": "^5.6.0"
+  }
+}

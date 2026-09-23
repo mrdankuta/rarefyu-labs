@@ -1,0 +1,8 @@
+{
+  email,
+} https://labs.local {
+  reverse_proxy /api/* api:3000
+  reverse_proxy /ws/* api:3000
+  reverse_proxy /preview/* api:3000
+  reverse_proxy web:3000
+}

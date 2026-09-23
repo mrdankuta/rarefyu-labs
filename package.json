@@ -1,0 +1,12 @@
+{
+  "name": "rarefyu-labs",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/*", "packages/*", "e2e"],
+  "scripts": {
+    "build": "cd packages/lab-sdk && bun run build && cd ../auth && bun run build && cd ../../apps/api && bun run build && cd ../web && bun run build",
+    "test": "cd packages/lab-sdk && bun test && cd ../../apps/api && bun test",
+    "dev:api": "cd apps/api && bun run dev",
+    "dev:web": "cd apps/web && bun run dev"
+  }
+}

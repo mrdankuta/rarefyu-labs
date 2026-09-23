@@ -1,0 +1,61 @@
+# Single-box control plane. Slice 1 scope: bring up only.
+# Exec plane (k3s + KubeVirt + Agent Sandbox) lives on the Hetzner host,
+# not in this file — see docs/labs-platform/plan.md T1.1.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+
+  web:
+    build: ../apps/web
+    restart: unless-stopped
+    environment:
+      PORT: "3000"
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://api:3000}
+
+  api:
+    build: ../apps/api
+    restart: unless-stopped
+    environment:
+      API_PORT: "3000"
+      POSTGRES_URL: ${POSTGRES_URL:-postgres://labs:labs@postgres:5432/labs}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-dev-only-insecure}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+    depends_on: [postgres, redis]
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: labs
+      POSTGRES_PASSWORD: labs
+      POSTGRES_DB: labs
+    volumes: [pgdata:/var/lib/postgresql/data]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    ports: ["9000:9000", "9001:9001"]
+    volumes: [minio-data:/data]
+
+  registry:
+    image: registry:2
+    restart: unless-stopped
+    ports: ["5000:5000"]
+    volumes: [registry-data:/var/lib/registry]
+
+volumes:
+  caddy-data: {}
+  pgdata: {}
+  minio-data: {}
+  registry-data: {}
