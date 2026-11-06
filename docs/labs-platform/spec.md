@@ -31,7 +31,7 @@ One URL per course: **guided steps, editor, terminal(s), file manager, browser p
 | Terminal | xterm.js behind `TerminalRenderer` iface (Ghostty-WASM later) | Only production browser terminal today. |
 | API | **Bun + Hono** (single service, `apps/api`) | Serves REST + WS terminal relay + preview proxy + webhooks. |
 | Auth | **Better-Auth** + Drizzle + Postgres | Self-hosted, SvelteKit-integrated, org plugin = cohorts, email+OAuth+passkey. No Clerk/Access fees or lock-in. |
-| DB / queue / store | Postgres 16 + Redis (Oban-equivalent: `bun` workers via BullMQ or pg-boss) + MinIO (S3-compat, replaces R2) + local registry | All on-box via Docker Compose v1; moves to managed/external when multi-node. |
+| DB / queue / store | Postgres 16 + Redis (Oban-equivalent: `bun` workers via BullMQ or pg-boss) + RustFS (S3-compat, replaces R2) + local registry | All on-box via Docker Compose v1; moves to managed/external when multi-node. |
 | Exec | **Firecracker-first, orchestrated by k3s + KubeVirt + Agent Sandbox CRDs** (see §5) | Real microVM isolation with K8s scheduling so 1 node → N nodes is `k3s join`. gVisor RuntimeClass for dense cheap labs on same box. |
 | Reverse proxy | Caddy (TLS auto, reverse proxy `/`, `/ws/*`, `/preview/*`) | Simpler than Traefik/Envoy for 1 box; upgrade path kept. |
 | Observability | OTEL + Prometheus/Grafana + Loki (all in compose) | Per-session boot/exec/OOM/cost metrics from day one. |
@@ -56,9 +56,9 @@ Hetzner AX (Ubuntu 24.04, /dev/kvm, NVMe)
 
 ### Scaling 1 → N Hetzner nodes
 
-1. Keep control plane (web/api/pg/redis/minio/registry) on node-0 (or tiny CX cloud VM) stateless + backed-up.
+1. Keep control plane (web/api/pg/redis/rustfs/registry) on node-0 (or tiny CX cloud VM) stateless + backed-up.
 2. New exec node = same Ubuntu image + `k3s agent join` + labels (`workload=lab`, `hv=kvm`) → capacity appears; WarmPools spread via affinity.
-3. Storage: Longhorn replica 2 → 3 as nodes arrive; object artifacts already in MinIO (later migrate bucket to Hetzner Object Storage).
+3. Storage: Longhorn replica 2 → 3 as nodes arrive; object artifacts already in RustFS (later migrate bucket to Hetzner Object Storage).
 4. Network: Multus bridges per host now; VXLAN/Geneve overlay (or Tailscale/WireGuard mesh) when labs span hosts; preview proxy stays central (signed URLs).
 5. Unit economics you control: ~~200 standard (`runsc`, 0.25CPU/512M oversubscribed) or ~30–60 KubeVirt VMs (2CPU/4G) per AX52-class box depending on oversubscription. Tune from real metrics, not theory.
 

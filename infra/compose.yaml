@@ -12,14 +12,18 @@ services:
       - caddy-data:/data
 
   web:
-    build: ../apps/web
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
     restart: unless-stopped
     environment:
       PORT: "3000"
       PUBLIC_API_URL: ${PUBLIC_API_URL:-http://api:3000}
 
   api:
-    build: ../apps/api
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
     restart: unless-stopped
     environment:
       API_PORT: "3000"

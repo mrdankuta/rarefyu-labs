@@ -12,7 +12,7 @@ packages/lab-sdk/      # LabTemplate/Session/CheckResult/AgentPolicy zod types
 images/base-lab/       # OCI base (student user, node/python, code-server, tmux, lab-check)
 courses/demo-agent/    # steps.md + lab.yaml + starter + tests + scripts/
 k8s/                   # k3s bootstrap, KubeVirt, gVisor RuntimeClass, agent-sandbox, templates, NetPol
-infra/compose.yaml     # v1 control plane: web/api/pg/redis/minio/registry/caddy/prom/loki
+infra/compose.yaml     # v1 control plane: web/api/pg/redis/rustfs/registry/caddy/prom/loki
 e2e/                   # Playwright (bunx playwright)
 docs/adr/ docs/cost.md
 ```
@@ -20,7 +20,7 @@ docs/adr/ docs/cost.md
 ## Phase 0 — Box + toolchain (days 1–3)
 
 ### T0.1 Bun monorepo + compose control plane
-- Context: `bun init`-style workspaces (`apps/*`, `packages/*`). `infra/compose.yaml`: caddy, web, api, postgres:16, redis:7, minio, registry:2, prometheus/grafana/loki. Caddy terminates TLS and routes `/ → web`, `/api/* → api`, `/ws/* → api (WS)`, `/preview/* → api (signed proxy)`.
+- Context: `bun init`-style workspaces (`apps/*`, `packages/*`). `infra/compose.yaml`: caddy, web, api, postgres:16, redis:7, rustfs, registry:2, prometheus/grafana/loki. Caddy terminates TLS and routes `/ → web`, `/api/* → api`, `/ws/* → api (WS)`, `/preview/* → api (signed proxy)`.
 - Acceptance: `bun install && bun run build` green; `docker compose up` serves staging host with valid cert.
 - Verify: `bun install; bun run build; docker compose -f infra/compose.yaml up -d; curl -k https://labs.local/healthz`
 
@@ -57,7 +57,7 @@ docs/adr/ docs/cost.md
 - Verify: `bun --filter web dev` manual pass + `bunx playwright test e2e/shell.spec.ts`
 
 ### T1.4 Demo course + checker v0
-- Context: `courses/demo-agent` (5 steps) + `lab-check` (command/http/file validators). Worker `POST /sessions/:id/check` runs **against** sandbox; logs to MinIO. Starter fails with hints, solution passes <30s.
+- Context: `courses/demo-agent` (5 steps) + `lab-check` (command/http/file validators). Worker `POST /sessions/:id/check` runs **against** sandbox; logs to RustFS. Starter fails with hints, solution passes <30s.
 - Acceptance: `lab-check` fail-then-pass locally and remotely; attempts recorded in Postgres.
 - Verify: `cd courses/demo-agent && ./scripts/bootstrap && lab-check` (fail) → apply solution → pass; `curl -XPOST .../check` asserts same.
 
@@ -88,7 +88,7 @@ docs/adr/ docs/cost.md
 - Verify: `bunx playwright test e2e/agent.spec.ts; bun test redact`
 
 ### T3.2 Isolated grading
-- Context: graded checks run in fresh checker pod/VM from submitted commit (not learner shell). Same commit → same verdict. Immutable result + logs in MinIO.
+- Context: graded checks run in fresh checker pod/VM from submitted commit (not learner shell). Same commit → same verdict. Immutable result + logs in RustFS.
 - Acceptance: tampered in-lab `lab-check` doesn't affect grade; double-submit identical.
 - Verify: `bunx playwright test e2e/determinism.spec.ts`
 

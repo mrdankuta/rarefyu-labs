@@ -73,7 +73,7 @@ passes end to end.
 ## 6. Backups (minimum viable)
 
 - Nightly: `pg_dump` (compose postgres) + tar of `/data` registry +
-  MinIO buckets → Hetzner Storage Box (`rsync`/`rclone`, SSH key auth).
+  RustFS buckets → Hetzner Storage Box (`rsync`/`rclone`, SSH key auth).
 - Keep `.digest` files and `lab.yaml` pins in git — images rebuild
   deterministically from the registry or from Dockerfile + digest.
 
