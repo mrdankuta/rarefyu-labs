@@ -1,9 +1,12 @@
 FROM oven/bun:1-slim AS base
 WORKDIR /app
-COPY package.json bun.lockb* ./
+COPY package.json bun.lock bun.lockb* ./
 COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
 COPY packages/lab-sdk/package.json ./packages/lab-sdk/
-RUN bun install --cwd . 2>/dev/null || bun install
+COPY packages/auth/package.json ./packages/auth/
+COPY e2e/package.json ./e2e/
+RUN bun install
 COPY . .
 ENV API_PORT=3000
 EXPOSE 3000
