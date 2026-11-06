@@ -12,8 +12,7 @@ RUN bun --cwd apps/web run build
 
 FROM oven/bun:1-slim
 WORKDIR /app
-COPY --from=build /app/apps/web/build ./build
-COPY --from=build /app/apps/web/package.json ./
+COPY --from=build /app/apps/web ./
 ENV PORT=3000
 EXPOSE 3000
 CMD ["bun", "./build/index.js"]
