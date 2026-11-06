@@ -71,7 +71,7 @@ df -h "${DATA_MOUNT}"
 
 # --- 3. Base packages, firewall, updates -------------------------------------
 log "installing base packages"
-apt-get install -y -qq ufw fail2ban unattended-updates htop tmux vim less
+apt-get install -y -qq ufw fail2ban unattended-upgrades htop tmux vim less
 systemctl enable --now fail2ban
 cat > /etc/apt/apt.conf.d/51-unattended-labs <<'EOF'
 APT::Periodic::Update-Package-Lists "1";
