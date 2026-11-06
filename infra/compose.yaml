@@ -41,12 +41,15 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
 
-  minio:
-    image: minio/minio:latest
+  rustfs:
+    image: rustfs/rustfs:latest
     restart: unless-stopped
-    command: server /data --console-address ":9001"
+    command: /data --address :9000 --console-enable --console-address :9001
+    environment:
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY:-labs}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_KEY:-labsdevsecret}
     ports: ["9000:9000", "9001:9001"]
-    volumes: [minio-data:/data]
+    volumes: [rustfs-data:/data]
 
   registry:
     image: registry:2
@@ -57,5 +60,5 @@ services:
 volumes:
   caddy-data: {}
   pgdata: {}
-  minio-data: {}
+  rustfs-data: {}
   registry-data: {}
