@@ -230,6 +230,48 @@
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(() => (toast = ""), 6000);
   }
+  // --- agent broker (issue #9): approvals + live trace + audit ---
+  interface AgentResult { tool: string; ok: boolean; output: string }
+  let agentTrace = $state<AgentResult[]>([]);
+  let agentStatus = $state("");
+  let agentPending = $state<{ callId: string; tool: string; args: unknown; reason: string }[]>([]);
+  let agentAudit = $state<{ seq: number; tool: string; decision: string; argsPreview: string; outputPreview?: string }[]>([]);
+  async function refreshAgent() {
+    const [p, a] = await Promise.all([
+      fetch(`${API}/api/playgrounds/${id}/agent/pending`),
+      fetch(`${API}/api/playgrounds/${id}/agent/audit`),
+    ]);
+    if (p.ok) agentPending = (await p.json()).pending;
+    if (a.ok) agentAudit = (await a.json()).audit;
+  }
+  async function agentFix() {
+    agentStatus = "running…";
+    const r = await fetch(`${API}/api/playgrounds/${id}/agent/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ plan: [
+        { tool: "fs.write", args: { path: "src/app.ts", content: "export const healthz = () => ({ ok: true });\n" } },
+        { tool: "checks.run", args: { track: TRACK, step: "01-scaffold" } },
+      ]}),
+    });
+    const body = await r.json();
+    agentTrace = body.results ?? [];
+    agentStatus = body.status ?? "";
+    listFiles();
+    refreshAgent();
+  }
+  async function decide(callId: string, approve: boolean) {
+    const r = await fetch(`${API}/api/playgrounds/${id}/agent/decide`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ callId, approve }),
+    });
+    const body = await r.json();
+    agentTrace = body.results ?? agentTrace;
+    agentStatus = body.status ?? agentStatus;
+    listFiles();
+    refreshAgent();
+  }
   async function pollNotices() {
     try {
       const r = await fetch(`${API}/api/playgrounds/${id}/notices`);
@@ -242,6 +284,7 @@
     } catch { /* retry next tick */ }
   }
   setInterval(pollNotices, 15000);
+  $effect(() => { if (runTab === "Agent") refreshAgent(); });
 
   onMount(() => {
     loadSession().then(() => { listFiles(); attachTerm("Term 1"); loadTrack(); });
@@ -327,7 +370,21 @@
           <div class="prev">◷ {previewState.hint ?? "waiting for :3000 — start your app, this pane goes live"}<br /><span style="font-size:12px">signed URL · 60s TTL · auto-retries every 5s</span></div>
         {/if}
       </div>
-      <div class="rpane" class:on={runTab === "Agent"}><div class="agent"><b>Lab agent</b><div class="apolicy">agent broker ships in slice 8 — this tab is reserved</div></div></div>
+      <div class="rpane" class:on={runTab === "Agent"}>
+        <div class="agent"><b>Lab agent</b>
+          <div class="apolicy">file ✓ allowed · shell ⚠ approval · network/creds ⛔ forbidden</div>
+          <button class="abtn" onclick={() => { runTab = "Agent"; agentFix(); }}>✨ fix step 1 with the agent</button>
+          {#if agentStatus}<p style="color:#94a3b8">run: {agentStatus}</p>{/if}
+          {#each agentPending as p}
+            <div class="approve">{p.tool} needs approval — {p.reason}<br /><code>{JSON.stringify(p.args).slice(0, 160)}</code><br />
+              <button class="abtn ok" onclick={() => decide(p.callId, true)}>allow</button>
+              <button class="abtn no" onclick={() => decide(p.callId, false)}>deny</button>
+            </div>
+          {/each}
+          {#each agentTrace as t}<div class="trace {t.ok ? '' : 'bad'}"><b>{t.tool}</b> {t.ok ? "✓" : "✗"} — {t.output.slice(0, 200)}</div>{/each}
+          {#if agentAudit.length}<div class="fh" style="margin-top:10px;color:#888;font-size:11px">AUDIT (redacted)</div>{#each agentAudit.slice(-8) as a}<div class="trace">#{a.seq} {a.tool} [{a.decision}] {a.argsPreview.slice(0, 120)}</div>{/each}{/if}
+        </div>
+      </div>
     </section>
   </div>
 </div>
@@ -394,6 +451,12 @@
   .termwrap{flex:1;min-height:0;padding:8px}
   .termwrap :global(.xterm){height:100%}
   .prev{margin:12px;border:1px dashed #475569;border-radius:8px;min-height:200px;display:grid;place-items:center;color:#94a3b8;text-align:center;padding:16px}
-  .agent{padding:14px;font-size:13px}
+  .agent{padding:14px;font-size:13px;overflow:auto}
   .apolicy{background:#1e293b;border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12.5px}
+  .abtn{background:#334155;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-weight:700;cursor:pointer;margin:4px 4px 4px 0}
+  .abtn.ok{background:#16a34a}.abtn.no{background:#7f1d1d}
+  .approve{border:1px solid #f59e0b;border-radius:8px;padding:8px 10px;margin-top:8px;font-size:12.5px}
+  .approve code{font-size:11px;color:#94a3b8}
+  .trace{font-family:var(--mono);font-size:11.5px;color:#a5b4fc;margin-top:6px;word-break:break-word}
+  .trace.bad{color:#fca5a5}
 </style>

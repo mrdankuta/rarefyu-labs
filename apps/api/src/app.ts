@@ -33,6 +33,7 @@ import {
   resetSession,
   takeNotices,
 } from "./teach";
+import { decideCall, getAudit as getAgentAudit, getPending, redact, submitRun } from "./agent";
 
 /** Slice-1 stub store. Slice 2 replaces with Postgres + quota checks. */
 const sessions = new Map<string, unknown>();
@@ -408,6 +409,40 @@ app.get("/api/teach/stats", async (c) => {
 app.get("/api/teach/audit", async (c) => {
   if (!(await requireInstructor(c))) return c.json({ error: "sign-in required" }, 401);
   return c.json({ audit: getAudit() });
+});
+
+// --- Agent broker (issue #9): policy tiers, approvals, redacted audit ---
+app.post("/api/playgrounds/:id/agent/run", async (c) => {
+  if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
+  const body = await c.req.json().catch(() => ({}));
+  if (!Array.isArray(body.plan)) return c.json({ error: "need {plan:[{tool,args}]}" }, 400);
+  try {
+    const run = await submitRun(c.req.param("id"), body.plan);
+    return c.json(run, 201);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+app.get("/api/playgrounds/:id/agent/pending", (c) => {
+  if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
+  return c.json({ pending: getPending(c.req.param("id")) });
+});
+
+app.post("/api/playgrounds/:id/agent/decide", async (c) => {
+  if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.callId || typeof body.approve !== "boolean")
+    return c.json({ error: "need {callId, approve:boolean}" }, 400);
+  const run = await decideCall(String(body.callId), body.approve);
+  if (!run) return c.json({ error: "no such pending call" }, 404);
+  return c.json(run);
+});
+
+// Audit export: full replay, secrets redacted, args hashed.
+app.get("/api/playgrounds/:id/agent/audit", (c) => {
+  if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
+  return c.json({ audit: getAgentAudit(c.req.param("id")) });
 });
 
 // Learner polls this for reset/extend/announce toasts (consumed on read).
