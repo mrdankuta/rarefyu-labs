@@ -13,6 +13,8 @@ RUN cd apps/web && bun run build && ls -la build
 FROM oven/bun:1-slim
 WORKDIR /app
 COPY --from=build /app/apps/web ./
+RUN chown -R bun:bun /app
+USER bun
 ENV PORT=3000
 EXPOSE 3000
 CMD ["bun", "./build/index.js"]

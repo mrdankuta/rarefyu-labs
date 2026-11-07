@@ -35,6 +35,7 @@ import {
 } from "./teach";
 import { decideCall, getAudit as getAgentAudit, getPending, redact, submitRun } from "./agent";
 import { getGrade, getSubmission, gradeSubmission, submitForGrading } from "./grading";
+import { noteHeartbeat, noteKill, noteProvisionErr, noteProvisionOk, noteProvisionStart, renderMetrics } from "./metrics";
 
 /** Slice-1 stub store. Slice 2 replaces with Postgres + quota checks. */
 const sessions = new Map<string, unknown>();
@@ -105,7 +106,14 @@ app.post("/api/playgrounds", async (c) => {
   }
   try {
     // Provision exec workspace (warm-claim path lands here in the gVisor driver).
-    await driver.create(rec.id);
+    noteProvisionStart(rec.id);
+    try {
+      await driver.create(rec.id);
+    } catch (err) {
+      noteProvisionErr();
+      throw err;
+    }
+    noteProvisionOk();
   } catch (err) {
     // No orphan records: failed provisioning releases the quota slot.
     destroyPlayground(rec.id);
@@ -124,8 +132,13 @@ app.get("/api/playgrounds/:id", (c) => {
 app.post("/api/playgrounds/:id/heartbeat", (c) => {
   const rec = heartbeat(c.req.param("id"));
   if (!rec) return c.json({ error: "playground not found" }, 404);
+  noteHeartbeat(c.req.param("id"));
   return c.json(publicRec(rec as unknown as Record<string, unknown>));
 });
+
+app.get("/metrics", (c) =>
+  new Response(renderMetrics(), { headers: { "content-type": "text/plain; version=0.0.4" } }),
+);
 
 app.get("/api/playgrounds/:id/snapshot", (c) => {
   const rec = getPlayground(c.req.param("id"));
@@ -477,5 +490,6 @@ app.delete("/api/playgrounds", async (c) => {
   const result = nukePlaygrounds();
   // Destroy exec workspaces best-effort; records already marked destroyed.
   await Promise.all(getAllPlaygroundIds().map((id) => driver.destroy(id)));
+  noteKill(result.destroyed);
   return c.json({ ok: true, ...result });
 });

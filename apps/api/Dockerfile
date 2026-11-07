@@ -9,6 +9,9 @@ COPY e2e/package.json ./e2e/
 RUN bun install
 COPY . .
 RUN cd packages/lab-sdk && bun run build && cd ../auth && bun run build
+# Run as the unprivileged bun user (oven/bun:1-slim provides it).
+RUN chown -R bun:bun /app
+USER bun
 ENV API_PORT=3000
 EXPOSE 3000
 CMD ["bun", "./apps/api/src/index.ts"]
