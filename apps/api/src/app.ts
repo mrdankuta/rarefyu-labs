@@ -34,6 +34,7 @@ import {
   takeNotices,
 } from "./teach";
 import { decideCall, getAudit as getAgentAudit, getPending, redact, submitRun } from "./agent";
+import { getGrade, getSubmission, gradeSubmission, submitForGrading } from "./grading";
 
 /** Slice-1 stub store. Slice 2 replaces with Postgres + quota checks. */
 const sessions = new Map<string, unknown>();
@@ -443,6 +444,26 @@ app.post("/api/playgrounds/:id/agent/decide", async (c) => {
 app.get("/api/playgrounds/:id/agent/audit", (c) => {
   if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
   return c.json({ audit: getAgentAudit(c.req.param("id")) });
+});
+
+// --- Isolated grading (issue #10): submit → grade in fresh env, immutable ---
+app.post("/api/playgrounds/:id/grade", async (c) => {
+  if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.track || !body.step) return c.json({ error: "need {track, step}" }, 400);
+  try {
+    const sub = await submitForGrading(c.req.param("id"), String(body.track), String(body.step));
+    const grade = await gradeSubmission(sub.id);
+    return c.json({ submission: sub, grade }, 201);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+app.get("/api/submissions/:sid", (c) => {
+  const sub = getSubmission(c.req.param("sid"));
+  if (!sub) return c.json({ error: "submission not found" }, 404);
+  return c.json({ submission: sub, grade: getGrade(sub.id) ?? null });
 });
 
 // Learner polls this for reset/extend/announce toasts (consumed on read).

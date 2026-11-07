@@ -183,6 +183,21 @@
     if (body.pass) { checkOk = true; checkHint = `PASS ✓ — step ${curStep + 1} of ${steps.length}`; if (curStep < steps.length - 1) curStep++; }
     else { checkOk = false; checkHint = "FAIL: " + body.failures.map((f: { hint: string }) => f.hint).join(" · "); }
   }
+  // --- isolated grading (issue #10): submit → official verdict ---
+  let gradeInfo = $state("");
+  async function submitGrade() {
+    if (!steps[curStep] || !confirm("Submit for official grading? (frozen snapshot, immutable record)")) return;
+    gradeInfo = "grading…";
+    const r = await fetch(`${API}/api/playgrounds/${id}/grade`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ track: TRACK, step: steps[curStep].slug }),
+    });
+    const body = await r.json();
+    gradeInfo = !r.ok ? body.error
+      : body.grade.pass ? `official: PASS ✓ · verdict ${body.grade.verdictHash.slice(0, 12)}`
+      : `official: FAIL — ${body.grade.failures.map((f: { hint: string }) => f.hint).join(" · ")} · ${body.grade.verdictHash.slice(0, 12)}`;
+  }
   async function unlockSolution() {
     if (!steps[curStep] || !confirm("Show the solution? (recorded as an unlock)")) return;
     const r = await fetch(`${API}/api/playgrounds/${id}/solve`, {
@@ -339,6 +354,8 @@
         <button onclick={runCheck}>Check ✓</button>
         {#if checkHint}<div class="hint" style:display="block" style:background={checkOk ? "#dcfce7" : "#fef9c3"} style:border-color={checkOk ? "#86efac" : "#fde047"}>{checkHint}</div>{/if}
         <div style="margin-top:8px;text-align:center"><a href="#" style="font-size:12px;color:#64748b" onclick={(e) => (e.preventDefault(), unlockSolution())}>stuck? unlock the solution</a></div>
+        <button style="margin-top:8px;background:#fff;color:var(--ink);border:1px solid var(--ink)" onclick={submitGrade}>Submit for grade</button>
+        {#if gradeInfo}<div class="hint" style:display="block">{gradeInfo}</div>{/if}
       </div>
     </section>
     <section class="ide">
