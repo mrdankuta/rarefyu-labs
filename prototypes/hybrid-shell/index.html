@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prototype: HYBRID shell (iximiuz chrome + original dock)</title>
+<style>
+:root{--header-bg:#edeff4;--tabbar-bg:#b6dcf7;--ink:#18252f;--font:Inter,ui-sans-serif,system-ui,sans-serif;--mono:"Source Code Pro",ui-monospace,Menlo,Consolas,monospace}
+*{box-sizing:border-box}html,body{height:100%}
+body{margin:0;font-family:var(--font);background:#000;color:#e6e6e6;overflow:hidden;font-size:14px}
+.win{display:flex;flex-direction:column;height:100vh}
+/* iximiuz chrome */
+.hdr{display:flex;align-items:center;justify-content:space-between;height:56px;padding:0 20px;background:var(--header-bg);color:var(--ink);flex:none}
+.hdr .l,.hdr .r{display:flex;align-items:center;gap:12px;min-width:0}
+.logo{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:4px;background:#1a1a1a;color:#fff;font-weight:800}
+.title{font-size:19px;font-weight:700;white-space:nowrap}
+.run{font-size:15px;color:#64748b}
+.dot{width:12px;height:12px;border-radius:99px;background:#22c55e}
+.timer{font-family:var(--mono);font-size:15px}
+.ibtn{border:0;background:transparent;color:var(--ink);border-radius:6px;padding:6px 8px;font-size:14px;cursor:pointer}
+.ibtn:hover{background:#dde3eb}.ibtn.danger{color:#ef4444}
+.avatar{width:32px;height:32px;border-radius:99px;background:radial-gradient(circle at 50% 35%,#c79a76 0 32%,#7b4a34 33% 60%,#2b2b2b 61%);border:1px solid #cbd5e1}
+/* tabbar: left group fixed panes, right group tabbed */
+.tabs{display:flex;align-items:center;gap:8px;height:52px;padding:0 16px;background:var(--tabbar-bg);flex:none}
+.grp{display:flex;align-items:center;gap:8px;min-width:0}
+.grp.L{width:32%}.grp.R{flex:1}
+.lbl{font-size:11px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-right:2px}
+.tab{display:inline-flex;align-items:center;height:34px;padding:0 12px;border:1px solid #cbd5e1;border-radius:99px;background:#fff;color:#334155;font-size:14px;cursor:pointer;white-space:nowrap}
+.tab.active{background:var(--ink);color:#fff;border-color:var(--ink)}
+.tab.static{font-weight:700}
+.add{border:1px dashed #64748b;background:transparent;color:#334155;border-radius:99px;width:34px;height:34px;font-size:18px;cursor:pointer}
+/* dock: fixed 3 columns — no pane swapping, overlap impossible */
+.dock{flex:1;display:grid;grid-template-columns:minmax(260px,32%) 1fr 1.2fr;min-height:0}
+/* left: steps + check pinned */
+.steps{background:#f8fafc;color:var(--ink);border-right:1px solid #cbd5e1;display:flex;flex-direction:column;min-height:0}
+.steps .body{padding:14px 16px;overflow:auto;flex:1}
+.steps .meta{font-size:12px;color:#64748b;margin-bottom:8px}
+.step{padding:8px 10px;border-radius:8px;margin-bottom:4px;font-size:14px;cursor:pointer}
+.step.done{color:#15803d}.step.cur{background:var(--ink);color:#fff}
+.assign{font-size:13.5px;line-height:1.5}
+.assign pre{background:#0f172a;color:#e2e8f0;padding:10px;border-radius:8px;font-family:var(--mono);font-size:12px;overflow:auto}
+.checkbar{padding:12px 16px;border-top:1px solid #cbd5e1;background:#fff}
+.checkbar button{width:100%;padding:10px;border:0;border-radius:8px;background:var(--ink);color:#fff;font-size:15px;font-weight:700;cursor:pointer}
+.hint{margin-top:10px;font-size:13px;background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:8px 10px;display:none}
+/* center: IDE */
+.ide{background:#181818;display:flex;min-height:0;min-width:0}
+.actbar{width:46px;background:#111;display:flex;flex-direction:column;align-items:center;padding:8px 0;gap:6px;flex:none}
+.act{width:34px;height:34px;display:grid;place-items:center;border-radius:8px;color:#858585;background:none;border:0;font-size:15px}
+.act.active{color:#fff;background:#222}
+.side{width:160px;background:#141414;border-right:1px solid #2a2a2a;flex:none;padding:10px;font-size:13px;overflow:auto}
+.fh{color:#888;font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin:4px 0}
+.file{font-family:var(--mono);padding:3px 8px;border-radius:6px;cursor:pointer;color:#ccc;font-size:12.5px}
+.file.sel{background:#2a2d2e;color:#fff}
+.ed{flex:1;background:#1f1f1f;display:flex;flex-direction:column;min-width:0}
+.edtab{padding:8px 12px;font-size:13px;font-family:var(--mono);border-bottom:1px solid #2a2a2a;display:flex;gap:10px}
+.edtab a{color:#93c5fd}
+.code{padding:10px 12px;font-family:var(--mono);font-size:12.5px;background:transparent;color:#d4d4d4;border:0;resize:none;outline:none;white-space:pre}
+.ro{background:#262626;color:#a3a3a3;font-family:var(--mono);font-size:12px;padding:7px 12px}
+.hintw{background:#422006;border-left:3px solid #f59e0b;padding:6px 10px;font-size:12px}
+/* right: tabbed group */
+.right{background:#080808;display:flex;flex-direction:column;min-height:0;min-width:0}
+.rpane{flex:1;min-height:0;overflow:auto;display:none}
+.rpane.on{display:flex;flex-direction:column}
+.term .out{flex:1;padding:12px;font-family:var(--mono);font-size:13px;white-space:pre-wrap;overflow:auto}
+.term .in{display:flex;gap:8px;padding:10px 12px;border-top:1px solid #222}
+.term .in span{font-family:var(--mono);font-size:13px;color:#4ade80}
+.term .in input{flex:1;background:none;border:0;outline:none;color:#e6e6e6;font-family:var(--mono);font-size:13px}
+.prev{margin:12px;border:1px dashed #475569;border-radius:8px;min-height:200px;display:grid;place-items:center;color:#94a3b8;text-align:center;padding:16px}
+.prev.ready{border-style:solid;border-color:#22c55e;color:#bbf7d0}
+.agent{padding:14px;font-size:13px}
+.apolicy{background:#1e293b;border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12.5px}
+.approve{border:1px solid #f59e0b;border-radius:8px;padding:8px 10px;margin-top:8px;font-size:12.5px}
+.approve button{margin-right:8px;padding:4px 12px;border-radius:6px;border:0;cursor:pointer;font-weight:700}
+.note{position:fixed;top:116px;right:12px;background:#fef9c3;color:#713f12;font-size:12px;padding:8px 12px;border-radius:8px;max-width:280px;z-index:5}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#18252f;color:#fff;padding:10px 18px;border-radius:8px;opacity:0;transition:opacity .2s}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div class="note">HYBRID prototype — iximiuz chrome + original dock. Mocked state. Overlap bug gone: columns are fixed, only the right group tabs.</div>
+<div class="win">
+  <header class="hdr"><div class="l"><span class="logo">R</span><span class="title">demo-agent › step-2-write-a-route</span><span class="run">› Run 7f3a…c91d</span></div>
+  <div class="r"><span class="dot"></span><span class="timer" id="timer">01h56m</span><button class="ibtn" id="snap">⛁ snapshot</button><button class="ibtn danger" id="power">⏻ stop</button><span class="avatar"></span></div></header>
+  <div class="tabs"><div class="grp L"><span class="lbl">Learn</span><span class="tab static">Instructions</span><span class="tab static">IDE</span></div>
+  <div class="grp R"><span class="lbl">Run</span><span id="rtabs" style="display:flex;gap:8px"></span></div></div>
+  <div class="dock">
+    <section class="steps"><div class="body"><div class="meta">Step 2 of 5 · checks: command + file</div>
+      <div class="step done">✓ 1 · scaffold the app</div><div class="step cur">2 · add GET /healthz</div><div class="step">3 · write a test</div><div class="step">4 · preview in pane</div><div class="step">5 · submit commit</div>
+      <div class="assign"><b>Add a /healthz route</b><p>In <code>src/app.ts</code>, add a route answering <code>GET /healthz</code> with <code>{"ok":true}</code>. Verify with curl, then Check.</p><pre>$ curl -s localhost:3000/healthz
+{"ok":true}</pre></div></div>
+      <div class="checkbar"><button id="check">Check ✓</button><div class="hint" id="hint"></div></div></section>
+    <section class="ide"><div class="actbar"><button class="act active">🗀</button><button class="act">🔍</button><button class="act">⎇</button></div>
+      <div class="side"><div class="fh">Explorer</div><div class="fh" style="text-transform:none">▾ workspace</div><div class="file sel">src/app.ts</div><div class="file">src/index.ts</div><div class="file">package.json</div></div>
+      <div class="ed"><div class="edtab"><span>● src/app.ts</span><a href="#" id="diff">diff</a><a href="#" id="rst">reset file</a></div>
+      <textarea class="code" rows="4" spellcheck="false">import { Hono } from "hono";
+const app = new Hono();</textarea>
+      <div class="ro">// 🔒 starter range (read-only) — edit below, not around</div>
+      <textarea class="code" id="ed2" rows="4" spellcheck="false">// ✏️ your code here
+</textarea>
+      <div class="hintw">💡 Hint: <code>app.get("/healthz", (c) =&gt; c.json({ok:true}))</code></div></div></section>
+    <section class="right">
+      <div class="rpane on term" id="p-Term1"><div class="out" id="o1">student@run-7f3a:~$ connected · tmux persists (mocked)
+</div><div class="in"><span>student@run-7f3a:~$</span><input id="i1" autocomplete="off"></div></div>
+      <div class="rpane term" id="p-Term2"><div class="out" id="o2"></div><div class="in"><span>student@run-7f3a:~$</span><input id="i2" autocomplete="off"></div></div>
+      <div class="rpane" id="p-Preview"><div class="prev" id="pv">◷ waiting for :3000…<br><span style="font-size:12px">write the route + start the app, this pane goes live</span></div></div>
+      <div class="rpane" id="p-Agent"><div class="agent"><b>Lab agent</b> (scoped to step 2)<div class="apolicy">file ✓ allowed · shell ⚠ approval · network ⛔ forbidden</div><div style="color:#94a3b8">Full audit trace per session. Sensitive actions pause for approval:</div><div class="approve">agent: <code>bun add hono</code> in session? <button id="apY" style="background:#16a34a;color:#fff">allow</button><button style="background:#334155;color:#fff" onclick="document.getElementById('apmsg').textContent='denied — agent continues without it (mocked)'">deny</button> <span id="apmsg"></span></div></div></div>
+    </section>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const $=s=>document.querySelector(s);
+const toast=m=>{const t=$("#toast");t.textContent=m;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),2200)};
+let ttl=116*60;setInterval(()=>{ttl=Math.max(0,ttl-60);$("#timer").textContent=`${String(Math.floor(ttl/3600)).padStart(2,"0")}h${String(Math.floor(ttl%3600/60)).padStart(2,"0")}m`},60000);
+// right-group tabs only — left columns never move
+let tabs=["Term 1","Term 2","Preview","Agent"],active="Term 1";
+function draw(){const w=$("#rtabs");w.innerHTML="";tabs.forEach(n=>{const b=document.createElement("button");b.className="tab"+(n===active?" active":"");b.textContent=n;b.onclick=()=>{active=n;sync();draw()};w.appendChild(b)});const a=document.createElement("button");a.className="add";a.textContent="+";a.onclick=()=>{const n="Term "+(tabs.filter(t=>t.startsWith("Term")).length+1);tabs.splice(2,0,n);active=n;sync();draw();toast("opened "+n)};w.appendChild(a)}
+function sync(){tabs.forEach(n=>$("#p-"+n.replace(" ","")).classList.toggle("on",n===active))}
+const has=()=>$("#ed2").value.includes("/healthz");
+$("#ed2").addEventListener("input",()=>{if(has()){const p=$("#pv");p.classList.add("ready");p.innerHTML="● LIVE — app on :3000 (mocked)<br><span style='font-size:12px'>signed preview URL · 60s TTL</span>"}});
+let n=0;$("#check").onclick=()=>{const h=$("#hint");h.style.display="block";n++;if(n===1)h.textContent="FAIL: GET /healthz → 404 — did you register the route? (attempt recorded, mocked)";else{h.style.background="#dcfce7";h.style.borderColor="#86efac";h.textContent="PASS: command + file checks green · step 3 unlocked (mocked)"}};
+function wire(i,o){$(i).addEventListener("keydown",e=>{if(e.key!=="Enter")return;const c=$(i).value.trim();$(i).value="";let r;if(c.startsWith("curl"))r=has()?'{"ok":true}':"404";else if(c==="ls")r="src package.json tests";else r=`(mock) ran: ${c}`;$(o).textContent+=`student@run-7f3a:~$ ${c}\n${r}\n`})}
+wire("#i1","#o1");wire("#i2","#o2");
+$("#diff").onclick=e=>{e.preventDefault();toast("diff: +2 lines vs starter (mocked)")};
+$("#rst").onclick=e=>{e.preventDefault();$("#ed2").value="// ✏️ your code here\n";toast("file reset (mocked)")};
+$("#apY").onclick=()=>$("#apmsg").textContent="allowed — audited (mocked)";
+$("#snap").onclick=()=>toast("snapshot saved (mocked)");
+$("#power").onclick=()=>toast("destroy needs confirm — run survives in mock");
+draw();sync();
+</script>
+</body>
+</html>
