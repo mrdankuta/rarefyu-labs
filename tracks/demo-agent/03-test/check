@@ -1,0 +1,7 @@
+#!/bin/sh
+. "$(dirname "$0")/fail.sh"
+[ -f tests/healthz.test.ts ] || { fail_message "tests/healthz.test.ts is missing"; exit 1; }
+OUT="$(bun test 2>&1)"
+echo "$OUT" | grep -qE "[0-9]+ pass" || { fail_message "bun test shows no passing tests — run 'bun test' locally to debug"; exit 1; }
+echo "$OUT" | grep -qE "[1-9][0-9]* fail" && { fail_message "bun test has failures — fix them, then Check again"; exit 1; }
+echo "PASS: tests green"

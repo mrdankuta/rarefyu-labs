@@ -1,0 +1,4 @@
+image: registry.labs.local/labs/base:0.1
+resources: { cpu: 2, memoryMb: 2048, diskGb: 10, timeoutMin: 60 }
+egress: full-rate-limited
+backend: gvisor

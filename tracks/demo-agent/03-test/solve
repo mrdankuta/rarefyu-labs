@@ -1,0 +1,8 @@
+#!/bin/sh
+mkdir -p tests
+cat > tests/healthz.test.ts <<'TS'
+import { expect, test } from "bun:test";
+import { healthz } from "../src/app";
+test("healthz shape", () => { expect(healthz()).toEqual({ ok: true }); });
+TS
+echo "solved: tests/healthz.test.ts written"

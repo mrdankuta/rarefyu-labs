@@ -1,0 +1,5 @@
+#!/bin/sh
+. "$(dirname "$0")/fail.sh"
+PORT="${PORT:-3000}"
+curl -s -m 5 "localhost:${PORT}/" >/dev/null || { fail_message "nothing listening on :${PORT} — start the server from step 2 first"; exit 1; }
+echo "PASS: app reachable for preview"

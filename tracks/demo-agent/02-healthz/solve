@@ -1,0 +1,11 @@
+#!/bin/sh
+cat > src/index.ts <<'TS'
+const port = Number(process.env.PORT ?? 3000);
+Bun.serve({ port, fetch(req) {
+  const u = new URL(req.url);
+  if (u.pathname === "/healthz") return Response.json({ ok: true });
+  return new Response("demo agent", { headers: { "content-type": "text/plain" } });
+} });
+console.log(`listening on :${port}`);
+TS
+echo "solved: src/index.ts written (run: bun src/index.ts &)"

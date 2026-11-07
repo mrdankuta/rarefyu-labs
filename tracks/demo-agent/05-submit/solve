@@ -1,0 +1,3 @@
+#!/bin/sh
+SUBMIT="$(echo "$RANDOM-$(date +%s)" | sha256sum | cut -c1-12)"
+echo "$SUBMIT" > SUBMIT.txt && cat SUBMIT.txt

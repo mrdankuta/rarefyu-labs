@@ -1,0 +1,4 @@
+#!/bin/sh
+(bun src/index.ts >/tmp/lab-app.log 2>&1 &)
+sleep 2
+echo "solved: server started — open the Preview tab"

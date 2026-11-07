@@ -1,0 +1,4 @@
+#!/bin/sh
+mkdir -p src
+printf 'export const healthz = () => ({ ok: true });\n' > src/app.ts
+echo "solved: src/app.ts written"

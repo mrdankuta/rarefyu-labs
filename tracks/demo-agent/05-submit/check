@@ -1,0 +1,7 @@
+#!/bin/sh
+. "$(dirname "$0")/fail.sh"
+for f in src/app.ts src/index.ts tests/healthz.test.ts SUBMIT.txt; do
+  [ -f "$f" ] || { fail_message "$f is missing — did you skip a step?"; exit 1; }
+done
+grep -qE "[0-9a-f]{6,}" SUBMIT.txt || { fail_message "SUBMIT.txt doesn't look like a submission hash"; exit 1; }
+echo "PASS: submission complete 🎉"

@@ -1,0 +1,9 @@
+#!/bin/sh
+. "$(dirname "$0")/fail.sh"
+[ -f src/index.ts ] || { fail_message "src/index.ts is missing"; exit 1; }
+PORT="${PORT:-3000}"
+(bun src/index.ts >/tmp/lab-app.log 2>&1 &) 
+sleep 2
+BODY="$(curl -s -m 5 "localhost:${PORT}/healthz" || true)"
+echo "$BODY" | grep -q '"ok"' || { fail_message "GET /healthz didn't return {\"ok\":…} (got: ${BODY:-nothing}) — is the server running on :${PORT}?"; exit 1; }
+echo "PASS: /healthz serves"

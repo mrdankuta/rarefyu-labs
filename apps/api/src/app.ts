@@ -12,6 +12,9 @@ import {
   sweepPlaygrounds,
 } from "./playgrounds";
 import { driver } from "./drivers/local";
+import { signPreview, verifyPreview } from "./preview";
+import { loadTrack } from "./tracks";
+import { getAttempts, getProgress, runCheck, runSolve } from "./checks";
 
 /** Slice-1 stub store. Slice 2 replaces with Postgres + quota checks. */
 const sessions = new Map<string, unknown>();
@@ -201,6 +204,94 @@ app.post("/api/playgrounds/:id/files/reset", async (c) => {
   } catch (err) {
     return c.json({ error: (err as Error).message }, 400);
   }
+});
+
+// --- Signed preview (issue #6): readiness probe + short-TTL signed URL + proxy ---
+app.get("/api/playgrounds/:id/preview", async (c) => {
+  const rec = getPlayground(c.req.param("id"));
+  if (!rec) return c.json({ error: "playground not found" }, 404);
+  const port = Number(c.req.query("port") ?? 3000);
+  if (!Number.isInteger(port) || port < 1 || port > 65535)
+    return c.json({ error: "invalid port" }, 400);
+  // Readiness: can we open the port in the session netns? (local stand-in: api host.)
+  let ready = false;
+  try {
+    const probe = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2000) });
+    ready = probe.status < 500;
+  } catch {
+    ready = false;
+  }
+  if (!ready) return c.json({ ready: false, port, hint: `waiting for :${port} — start your app, this pane goes live` });
+  const token = signPreview(rec.id, port);
+  return c.json({ ready: true, port, url: `/preview/${token}/`, expiresInSec: 60 });
+});
+
+// Proxied app bytes. Token in path so iframes need no headers.
+app.all("/preview/:token/*", async (c) => {
+  const tail = c.req.param("*") ?? "";
+  const qs = new URL(c.req.url).search;
+  const v = verifyPreview(c.req.param("token"));
+  if ("error" in v) return c.json({ error: v.error }, 403);
+  const rec = getPlayground(v.sessionId);
+  if (!rec || rec.status === "destroyed")
+    return c.json({ error: "session gone — reopen the playground" }, 404);
+  const target = `http://127.0.0.1:${v.port}/${tail}${qs}`;
+  const init: RequestInit = { method: c.req.method, headers: c.req.raw.headers };
+  if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+    init.body = await c.req.raw.arrayBuffer();
+    (init as Record<string, unknown>).duplex = "half";
+  }
+  try {
+    const upstream = await fetch(target, { ...init, signal: AbortSignal.timeout(30_000) });
+    return new Response(upstream.body, { status: upstream.status, headers: upstream.headers });
+  } catch {
+    return c.json({ error: `app on :${v.port} stopped responding — restart it and refresh` }, 502);
+  }
+});
+
+// --- Tracks + in-session checks (issue #6) ---
+app.get("/api/tracks/:slug", async (c) => {
+  try {
+    return c.json(await loadTrack(c.req.param("slug")));
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 404);
+  }
+});
+
+app.post("/api/playgrounds/:id/check", async (c) => {
+  if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.track || !body.step) return c.json({ error: "need {track, step}" }, 400);
+  try {
+    const r = await runCheck(c.req.param("id"), String(body.track), String(body.step));
+    return c.json({ ...r, progress: getProgress(c.req.param("id"), String(body.track)) });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+// Solution unlock: explicit POST only; the solve source never ships in hints.
+app.post("/api/playgrounds/:id/solve", async (c) => {
+  if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.track || !body.step || body.confirm !== true)
+    return c.json({ error: "need {track, step, confirm:true}" }, 400);
+  try {
+    const r = await runSolve(c.req.param("id"), String(body.track), String(body.step));
+    return c.json({ ...r, progress: getProgress(c.req.param("id"), String(body.track)) });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+app.get("/api/playgrounds/:id/attempts", (c) => {
+  if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
+  const track = c.req.query("track");
+  const atts = getAttempts(c.req.param("id")).filter((a) => !track || a.track === track);
+  return c.json({
+    attempts: atts,
+    progress: track ? getProgress(c.req.param("id"), track) : undefined,
+  });
 });
 
 // Kill switch: one-button playground nuke (<60s: synchronous here).

@@ -1,0 +1,6 @@
+#!/bin/sh
+# check: src/app.ts exists and mentions healthz
+. "$(dirname "$0")/fail.sh" 2>/dev/null || fail_message() { echo "FAIL: $1"; }
+[ -f src/app.ts ] || { fail_message "src/app.ts is missing — create it (see assignment)"; exit 1; }
+grep -q healthz src/app.ts || { fail_message "src/app.ts doesn't mention healthz yet"; exit 1; }
+echo "PASS: scaffold looks good"

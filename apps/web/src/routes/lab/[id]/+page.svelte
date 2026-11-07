@@ -155,8 +155,75 @@
   }
   setInterval(heartbeat, 5 * 60_000);
 
+  // --- demo track + in-session checks + preview (issue #6) ---
+  const TRACK = "demo-agent";
+  interface Step { slug: string; title: string; assignment: string }
+  let steps = $state<Step[]>([]);
+  let curStep = $state(0);
+  let checkHint = $state("");
+  let checkOk = $state<boolean | null>(null);
+  let previewState = $state<{ ready: boolean; url?: string; hint?: string }>({ ready: false });
+  async function loadTrack() {
+    try {
+      const r = await fetch(`${API}/api/tracks/${TRACK}`);
+      if (r.ok) steps = (await r.json()).steps;
+    } catch { /* track panel stays empty */ }
+  }
+  async function runCheck() {
+    if (!steps[curStep]) return;
+    checkHint = "running…";
+    checkOk = null;
+    const r = await fetch(`${API}/api/playgrounds/${id}/check`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ track: TRACK, step: steps[curStep].slug }),
+    });
+    const body = await r.json();
+    if (!r.ok) { checkHint = body.error; return; }
+    if (body.pass) { checkOk = true; checkHint = `PASS ✓ — step ${curStep + 1} of ${steps.length}`; if (curStep < steps.length - 1) curStep++; }
+    else { checkOk = false; checkHint = "FAIL: " + body.failures.map((f: { hint: string }) => f.hint).join(" · "); }
+  }
+  async function unlockSolution() {
+    if (!steps[curStep] || !confirm("Show the solution? (recorded as an unlock)")) return;
+    const r = await fetch(`${API}/api/playgrounds/${id}/solve`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ track: TRACK, step: steps[curStep].slug, confirm: true }),
+    });
+    const body = await r.json();
+    checkHint = r.ok ? "solution applied — review the files, then Check" : body.error;
+    if (r.ok) { openPath = null; listFiles(); }
+  }
+  // Minimal assignment renderer: fenced blocks, # headings, `code`, **bold**.
+  function esc(s: string) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function renderMd(md: string): string {
+    const parts = md.split(/```(\w*)\n?/);
+    let html = "";
+    for (let i = 0; i < parts.length; i++) {
+      if (i % 3 === 2) { html += `<pre>${esc(parts[i])}</pre>`; continue; }
+      if (i % 3 === 0) {
+        html += esc(parts[i])
+          .replace(/^### (.*)$/gm, "<b>$1</b>")
+          .replace(/^## (.*)$/gm, "<b>$1</b>")
+          .replace(/^# (.*)$/gm, "<b>$1</b>")
+          .replace(/`([^`]+)`/g, "<code>$1</code>")
+          .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+          .split(/\n{2,}/).map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
+      }
+    }
+    return html;
+  }
+  async function pollPreview() {
+    if (runTab !== "Preview") return;
+    try {
+      const r = await fetch(`${API}/api/playgrounds/${id}/preview?port=3000`);
+      if (r.ok) previewState = await r.json();
+    } catch { /* retry next tick */ }
+  }
+  setInterval(pollPreview, 5000);
+
   onMount(() => {
-    loadSession().then(() => { listFiles(); attachTerm("Term 1"); });
+    loadSession().then(() => { listFiles(); attachTerm("Term 1"); loadTrack(); });
     view = new EditorView({
       state: EditorState.create({
         doc: "// open a file from the explorer →\n",
@@ -198,10 +265,17 @@
       <div class="colbar">Learn <button onclick={() => (hideLearn = true)}>⟨ hide</button></div>
       <div class="body">
         {#if loadError}<p style="color:#b91c1c">{loadError}</p>{/if}
-        <div class="meta">free playground · timer only · no steps, no checks</div>
-        <div class="assign"><b>Welcome to your playground</b><p>Two terminals share one shell. Edit files in the IDE, save with <code>Ctrl/Cmd+S</code>. Use Preview when your app listens (slice 6 wires the URL).</p></div>
+        <div class="meta">demo-agent · {steps.length ? `step ${curStep + 1} of ${steps.length}` : "free playground"}</div>
+        {#each steps as s, i}
+          <div class="step" class:cur={i === curStep} onclick={() => (curStep = i, checkHint = "", checkOk = null)}>{s.title}</div>
+        {/each}
+        {#if steps[curStep]}<div class="assign">{@html renderMd(steps[curStep].assignment)}</div>{/if}
       </div>
-      <div class="checkbar"><button disabled title="checks arrive with guided labs">Check ✓ (guided only)</button></div>
+      <div class="checkbar">
+        <button onclick={runCheck}>Check ✓</button>
+        {#if checkHint}<div class="hint" style:display="block" style:background={checkOk ? "#dcfce7" : "#fef9c3"} style:border-color={checkOk ? "#86efac" : "#fde047"}>{checkHint}</div>{/if}
+        <div style="margin-top:8px;text-align:center"><a href="#" style="font-size:12px;color:#64748b" onclick={(e) => (e.preventDefault(), unlockSolution())}>stuck? unlock the solution</a></div>
+      </div>
     </section>
     <section class="ide">
       <div class="actbar"><button class="act active">🗀</button></div>
@@ -225,7 +299,13 @@
       {#each terms as t}
         <div class="rpane term" class:on={runTab === t}><div class="termwrap" bind:this={termEls[t]}></div></div>
       {/each}
-      <div class="rpane" class:on={runTab === "Preview"}><div class="prev">◷ preview wires up in slice 6<br /><span style="font-size:12px">signed URL per listening port</span></div></div>
+      <div class="rpane" class:on={runTab === "Preview"}>
+        {#if previewState.ready}
+          <iframe title="app preview" src={previewState.url} style="flex:1;border:0;background:#fff" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+        {:else}
+          <div class="prev">◷ {previewState.hint ?? "waiting for :3000 — start your app, this pane goes live"}<br /><span style="font-size:12px">signed URL · 60s TTL · auto-retries every 5s</span></div>
+        {/if}
+      </div>
       <div class="rpane" class:on={runTab === "Agent"}><div class="agent"><b>Lab agent</b><div class="apolicy">agent broker ships in slice 8 — this tab is reserved</div></div></div>
     </section>
   </div>
@@ -265,6 +345,10 @@
   .steps .body{padding:14px 16px;overflow:auto;flex:1}
   .steps .meta{font-size:12px;color:#64748b;margin-bottom:8px}
   .assign{font-size:13.5px;line-height:1.5}.assign code{background:#e2e8f0;padding:1px 5px;border-radius:4px}
+  .assign pre{background:#0f172a;color:#e2e8f0;padding:10px;border-radius:8px;font-family:var(--mono);font-size:12px;overflow:auto}
+  .step{padding:8px 10px;border-radius:8px;margin-bottom:4px;font-size:14px;cursor:pointer}
+  .step.cur{background:var(--ink);color:#fff}
+  .hint{margin-top:10px;font-size:13px;border:1px solid;border-radius:8px;padding:8px 10px}
   .checkbar{padding:12px 16px;border-top:1px solid #cbd5e1;background:#fff}
   .checkbar button{width:100%;padding:10px;border:0;border-radius:8px;background:var(--ink);color:#fff;font-size:15px;font-weight:700;cursor:pointer}
   .checkbar button:disabled{opacity:.45;cursor:not-allowed}

@@ -1,0 +1,7 @@
+title: Demo Agent — your first lab
+slug: demo-agent
+mode: guided
+ttl: 120
+tabs:
+  - { title: Terminal, type: terminal }
+  - { title: Preview, type: website, port: 3000 }
