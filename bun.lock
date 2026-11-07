@@ -9,6 +9,7 @@
       "name": "@rarefyu/api",
       "version": "0.1.0",
       "dependencies": {
+        "@rarefyu/auth": "workspace:*",
         "@rarefyu/lab-sdk": "workspace:*",
         "hono": "^4.6.0",
         "yaml": "^2.9.1",
@@ -62,6 +63,7 @@
       },
       "devDependencies": {
         "@types/pg": "^8.11.0",
+        "bun-types": "^1.4.4",
         "drizzle-kit": "^0.28.0",
         "typescript": "^5.6.0",
       },

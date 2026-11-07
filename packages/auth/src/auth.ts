@@ -20,3 +20,6 @@ export const auth = betterAuth({
 });
 
 export type Auth = typeof auth;
+
+export { LEARNER_POLICY, INSTRUCTOR_POLICY, checkQuota, requireGuidedAuth } from "./quotas";
+export type { QuotaPolicy, QuotaUsage, QuotaDecision } from "./quotas";

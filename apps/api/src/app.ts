@@ -15,6 +15,15 @@ import { driver } from "./drivers/local";
 import { signPreview, verifyPreview } from "./preview";
 import { loadTrack } from "./tracks";
 import { getAttempts, getProgress, runCheck, runSolve } from "./checks";
+import {
+  countGuidedToday,
+  createGuidedRec,
+  destroyGuided,
+  getGuided,
+  listGuided,
+  resolveUser,
+} from "./guided";
+import { LEARNER_POLICY, checkQuota, requireGuidedAuth } from "@rarefyu/auth";
 
 /** Slice-1 stub store. Slice 2 replaces with Postgres + quota checks. */
 const sessions = new Map<string, unknown>();
@@ -292,6 +301,49 @@ app.get("/api/playgrounds/:id/attempts", (c) => {
     attempts: atts,
     progress: track ? getProgress(c.req.param("id"), track) : undefined,
   });
+});
+
+// --- Guided cohort gate (issue #3): auth required, quotas enforced ---
+// Anonymous playgrounds stay open (above). Guided sessions need a user.
+app.post("/api/guided-sessions", async (c) => {
+  const userId = await resolveUser(c);
+  const gate = requireGuidedAuth(userId);
+  if (!gate.ok) return c.json({ error: gate.error, remedy: gate.remedy }, 401);
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.track) return c.json({ error: "need {track}" }, 400);
+  const q = checkQuota(
+    { live: listGuided(gate.userId).length, createdLast24h: countGuidedToday(gate.userId) },
+    LEARNER_POLICY,
+  );
+  if (!q.ok)
+    return c.json(
+      { error: q.error, remedy: q.remedy, retryAfterSec: q.retryAfterSec },
+      429,
+    );
+  const rec = createGuidedRec({
+    userId: gate.userId,
+    organizationId: body.orgId ? String(body.orgId) : undefined,
+    track: String(body.track),
+  });
+  await driver.create(rec.id);
+  return c.json({ ...rec, mode: "guided", backend: "gvisor" }, 201);
+});
+
+app.get("/api/guided-sessions", async (c) => {
+  const userId = await resolveUser(c);
+  const gate = requireGuidedAuth(userId);
+  if (!gate.ok) return c.json({ error: gate.error, remedy: gate.remedy }, 401);
+  return c.json({ sessions: listGuided(gate.userId) });
+});
+
+app.delete("/api/guided-sessions/:id", async (c) => {
+  const userId = await resolveUser(c);
+  const gate = requireGuidedAuth(userId);
+  if (!gate.ok) return c.json({ error: gate.error, remedy: gate.remedy }, 401);
+  if (!destroyGuided(c.req.param("id"), gate.userId))
+    return c.json({ error: "guided session not found" }, 404);
+  await driver.destroy(c.req.param("id"));
+  return c.json({ ok: true });
 });
 
 // Kill switch: one-button playground nuke (<60s: synchronous here).
