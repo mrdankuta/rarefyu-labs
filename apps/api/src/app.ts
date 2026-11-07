@@ -3,12 +3,15 @@ import { SessionSchema } from "@rarefyu/lab-sdk";
 import {
   createPlayground,
   destroyPlayground,
+  getAllPlaygroundIds,
   getPlayground,
   heartbeat,
   identityKey,
   nukePlaygrounds,
   snapshotRetentionUntil,
+  sweepPlaygrounds,
 } from "./playgrounds";
+import { driver } from "./drivers/local";
 
 /** Slice-1 stub store. Slice 2 replaces with Postgres + quota checks. */
 const sessions = new Map<string, unknown>();
@@ -56,31 +59,49 @@ function ownerFrom(c: { req: { header: (h: string) => string | undefined } }): s
 }
 
 // Anonymous playground loop — no auth (workspace-spec §5).
+// ownerKey never leaves the server: public() strips it from responses.
+function publicRec(rec: Record<string, unknown>) {
+  const { ownerKey: _dropped, ...pub } = rec;
+  return pub;
+}
 app.post("/api/playgrounds", async (c) => {
   const body = await c.req.json().catch(() => ({}));
+  let rec;
   try {
-    const rec = createPlayground({
+    rec = createPlayground({
       ownerKey: ownerFrom(c),
       labId: body.labId ? String(body.labId) : undefined,
       ttlMin: body.ttlMin ? Number(body.ttlMin) : undefined,
     });
-    return c.json(rec, 201);
   } catch (err) {
     const status = (err as { status?: number }).status ?? 500;
-    return c.json({ error: (err as Error).message }, status as 429);
+    return c.json(
+      { error: (err as Error).message },
+      (status === 429 ? 429 : 500) as 429 | 500,
+    );
   }
+  try {
+    // Provision exec workspace (warm-claim path lands here in the gVisor driver).
+    await driver.create(rec.id);
+  } catch (err) {
+    // No orphan records: failed provisioning releases the quota slot.
+    destroyPlayground(rec.id);
+    return c.json({ error: `exec provisioning failed: ${(err as Error).message}` }, 500 as 500);
+  }
+  sweepPlaygrounds(); // opportunistic expiry on each create
+  return c.json(publicRec(rec as unknown as Record<string, unknown>), 201);
 });
 
 app.get("/api/playgrounds/:id", (c) => {
   const rec = getPlayground(c.req.param("id"));
   if (!rec) return c.json({ error: "playground not found" }, 404);
-  return c.json({ ...rec, warned: rec.warned });
+  return c.json(publicRec(rec as unknown as Record<string, unknown>));
 });
 
 app.post("/api/playgrounds/:id/heartbeat", (c) => {
   const rec = heartbeat(c.req.param("id"));
   if (!rec) return c.json({ error: "playground not found" }, 404);
-  return c.json(rec);
+  return c.json(publicRec(rec as unknown as Record<string, unknown>));
 });
 
 app.get("/api/playgrounds/:id/snapshot", (c) => {
@@ -88,7 +109,7 @@ app.get("/api/playgrounds/:id/snapshot", (c) => {
   if (!rec) return c.json({ error: "playground not found" }, 404);
   if (!rec.snapshotAt)
     return c.json({ error: "no snapshot yet — taken on expiry" }, 404);
-  // v1: metadata + download hook; tarball stream arrives with ExecDriver.
+  // Metadata; bytes stream from /snapshot.tar (workspace-t tarball).
   return c.json({
     id: rec.id,
     snapshotAt: rec.snapshotAt,
@@ -97,13 +118,30 @@ app.get("/api/playgrounds/:id/snapshot", (c) => {
   });
 });
 
-app.delete("/api/playgrounds/:id", (c) => {
+app.delete("/api/playgrounds/:id", async (c) => {
   const ok = destroyPlayground(c.req.param("id"));
   if (!ok) return c.json({ error: "playground not found" }, 404);
+  await driver.destroy(c.req.param("id"));
   return c.json({ ok: true });
 });
 
-// Kill switch: one-button playground nuke.
-app.delete("/api/playgrounds", (c) => {
-  return c.json({ ok: true, ...nukePlaygrounds() });
+// Real tarball download (workspace-t). Metadata lives at /snapshot.
+app.get("/api/playgrounds/:id/snapshot.tar", async (c) => {
+  const rec = getPlayground(c.req.param("id"));
+  if (!rec) return c.json({ error: "playground not found" }, 404);
+  const stream = await driver.snapshotTar(c.req.param("id"));
+  return new Response(stream, {
+    headers: {
+      "content-type": "application/gzip",
+      "content-disposition": `attachment; filename="workspace-${rec.id}.tar.gz"`,
+    },
+  });
+});
+
+// Kill switch: one-button playground nuke (<60s: synchronous here).
+app.delete("/api/playgrounds", async (c) => {
+  const result = nukePlaygrounds();
+  // Destroy exec workspaces best-effort; records already marked destroyed.
+  await Promise.all(getAllPlaygroundIds().map((id) => driver.destroy(id)));
+  return c.json({ ok: true, ...result });
 });

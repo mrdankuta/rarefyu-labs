@@ -132,6 +132,10 @@ export function getPlayground(id: string) {
   return playgrounds.get(id);
 }
 
+export function getAllPlaygroundIds(): string[] {
+  return [...playgrounds.keys()];
+}
+
 export function destroyPlayground(id: string, now?: number): boolean {
   const rec = playgrounds.get(id);
   if (!rec) return false;
