@@ -8,7 +8,7 @@ COPY packages/auth/package.json ./packages/auth/
 COPY e2e/package.json ./e2e/
 RUN bun install
 COPY apps/web ./apps/web
-RUN bun --cwd apps/web run build
+RUN bun --cwd apps/web run build && ls -la apps/web/build
 
 FROM oven/bun:1-slim
 WORKDIR /app

@@ -1,6 +1,6 @@
-{
-  email,
-} https://labs.local {
+# Bench default: plain HTTP (no public DNS / ACME on the laptop).
+# Production (Hetzner): replace :80 with https://labs.<domain> + tls <email>.
+:80 {
   reverse_proxy /api/* api:3000
   reverse_proxy /ws/* api:3000
   reverse_proxy /preview/* api:3000

@@ -8,6 +8,7 @@ COPY packages/auth/package.json ./packages/auth/
 COPY e2e/package.json ./e2e/
 RUN bun install
 COPY . .
+RUN bun --cwd packages/lab-sdk run build && bun --cwd packages/auth run build
 ENV API_PORT=3000
 EXPOSE 3000
 CMD ["bun", "./apps/api/src/index.ts"]
