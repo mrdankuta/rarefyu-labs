@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prototype: ORIGINAL plan shell (dock, per PRD + T1.3)</title>
+<style>
+:root{--font:Inter,ui-sans-serif,system-ui,sans-serif;--mono:ui-monospace,Menlo,Consolas,monospace}
+*{box-sizing:border-box}html,body{height:100%}
+body{margin:0;font-family:var(--font);background:#0f172a;color:#e2e8f0;overflow:hidden;font-size:14px}
+.win{display:flex;flex-direction:column;height:100vh}
+/* top: course/lab + progress + connection — NO run-id/timer header in original plan */
+.topbar{display:flex;align-items:center;gap:12px;padding:8px 16px;background:#1e293b;border-bottom:1px solid #334155;flex:none}
+.topbar .crumb{font-weight:700}
+.topbar .steps{display:flex;gap:6px;margin-left:12px}
+.pill{font-size:12px;padding:3px 10px;border-radius:99px;background:#334155;color:#cbd5e1}
+.pill.done{background:#14532d;color:#bbf7d0}.pill.cur{background:#1d4ed8;color:#fff}
+.reconnect{display:none;margin-left:auto;background:#713f12;color:#fde68a;font-size:12px;padding:4px 10px;border-radius:6px}
+/* dock */
+.dock{flex:1;display:grid;grid-template-columns:250px 1fr 380px;grid-template-rows:1fr 1fr 44px;min-height:0}
+.rail{grid-row:1/3;background:#111c30;border-right:1px solid #334155;display:flex;flex-direction:column;min-height:0}
+.rail nav{display:flex;gap:2px;padding:8px;border-bottom:1px solid #334155}
+.rail nav button{flex:1;background:none;border:0;color:#94a3b8;font-size:12px;font-weight:700;padding:6px;cursor:pointer;text-transform:uppercase;letter-spacing:.05em}
+.rail nav button.on{color:#fff;border-bottom:2px solid #3b82f6}
+.rail .pane{flex:1;overflow:auto;padding:10px}
+.step{padding:8px;border-radius:8px;cursor:pointer;margin-bottom:4px}
+.step.cur{background:#1d4ed8}.step.done{color:#86efac}
+.file{font-family:var(--mono);font-size:13px;padding:4px 8px;border-radius:6px;cursor:pointer}
+.file.sel{background:#1e3a8a}
+.proj{padding:8px;border:1px solid #334155;border-radius:8px;margin-bottom:8px;cursor:pointer}
+.proj.sel{border-color:#3b82f6}
+/* editor */
+.ed{background:#0b1220;display:flex;flex-direction:column;min-width:0;min-height:0;grid-row:1/3;border-right:1px solid #334155}
+.edtab{padding:8px 12px;font-size:13px;font-family:var(--mono);border-bottom:1px solid #334155}
+.code{flex:1;margin:0;padding:12px;font-family:var(--mono);font-size:13px;background:transparent;color:#e2e8f0;border:0;resize:none;outline:none;white-space:pre}
+.ro{background:#1e293b;color:#94a3b8}
+.hintw{background:#422006;border-left:3px solid #f59e0b;padding:6px 10px;margin:6px 0;font-size:12.5px;border-radius:0 6px 6px 0}
+/* right column: terminals + preview + agent */
+.right{grid-row:1/3;display:flex;flex-direction:column;min-height:0;background:#000}
+.rtabs{display:flex;gap:4px;padding:6px 8px;background:#111c30}
+.rtabs button{background:none;border:0;color:#94a3b8;font-size:12px;padding:6px 10px;cursor:pointer;border-radius:6px}
+.rtabs button.on{background:#1e293b;color:#fff}
+.rpane{flex:1;min-height:0;overflow:auto;display:none}
+.rpane.on{display:block}
+.term{padding:10px;font-family:var(--mono);font-size:13px;white-space:pre-wrap}
+.term input{width:70%;background:none;border:0;outline:none;color:#e2e8f0;font-family:var(--mono);font-size:13px}
+.prev{margin:10px;border:1px dashed #475569;border-radius:8px;min-height:180px;display:grid;place-items:center;color:#94a3b8;font-size:13px;text-align:center;padding:16px}
+.prev.ready{border-style:solid;border-color:#22c55e;color:#bbf7d0}
+.agent{padding:10px;font-size:13px}
+.apolicy{font-size:12px;background:#1e293b;border-radius:8px;padding:8px;margin:6px 0}
+/* checks bar */
+.checks{grid-column:1/4;background:#111c30;border-top:1px solid #334155;display:flex;align-items:center;gap:12px;padding:0 16px}
+.checks button{background:#16a34a;border:0;color:#fff;font-weight:700;padding:8px 22px;border-radius:8px;cursor:pointer}
+.verdict{font-family:var(--mono);font-size:12.5px}
+.verdict.fail{color:#fca5a5}.verdict.pass{color:#86efac}
+.note{position:fixed;top:52px;right:12px;background:#1d4ed8;color:#fff;font-size:12px;padding:8px 12px;border-radius:8px;max-width:300px}
+.toast{position:fixed;bottom:56px;left:50%;transform:translateX(-50%);background:#020617;border:1px solid #334155;padding:10px 18px;border-radius:8px;opacity:0;transition:opacity .2s}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div class="note">PROTOTYPE of the ORIGINAL plan (PRD story 5 + T1.3 dock). Mocked state. Compare with the iximiuz-style prototype.</div>
+<div class="win">
+  <div class="topbar"><span class="crumb">demo-agent › step-2-write-a-route</span>
+    <div class="steps"><span class="pill done">1 setup</span><span class="pill cur">2 route</span><span class="pill">3 tests</span><span class="pill">4 preview</span><span class="pill">5 submit</span></div>
+    <span class="reconnect" id="rec">⟳ reconnecting… session resumes on tmux</span></div>
+  <div class="dock">
+    <aside class="rail"><nav><button class="on" data-r="steps">Steps</button><button data-r="files">Files</button><button data-r="projects">Projects</button></nav>
+      <div class="pane" id="rpane"></div></aside>
+    <section class="ed"><div class="edtab">● src/app.ts — <span style="color:#f59e0b">read-only range + hint below</span> · <a href="#" id="diffL" style="color:#93c5fd">diff</a> · <a href="#" id="rstL" style="color:#93c5fd">reset file</a></div>
+      <div style="flex:1;display:flex;flex-direction:column;overflow:auto"><textarea class="code" id="editor" spellcheck="false">import { Hono } from "hono";
+const app = new Hono();</textarea>
+      <div class="ro" style="font-family:var(--mono);font-size:13px;padding:8px 12px">// 🔒 starter range (read-only): GET /healthz must live here — edit below, not around</div>
+      <textarea class="code" id="editor2" style="flex:1" spellcheck="false">// ✏️ your code here
+</textarea>
+      <div class="hintw">💡 Hint: <code>app.get("/healthz", (c) =&gt; c.json({ok:true}))</code> — then curl it in Term 1.</div></div></section>
+    <div class="right"><div class="rtabs"><button class="on" data-t="t1">Term 1</button><button data-t="t2">Term 2</button><button data-t="pv">Preview :3000</button><button data-t="ag">Agent</button></div>
+      <div class="rpane on" id="p-t1"><div class="term" id="o1">student@session:~/workspace$ <span style="color:#64748b">tmux persists across refresh (mocked)</span>
+</div><div class="term">student@session:~$ <input id="i1" autocomplete="off"></div></div>
+      <div class="rpane" id="p-t2"><div class="term" id="o2"></div><div class="term">student@session:~$ <input id="i2" autocomplete="off"></div></div>
+      <div class="rpane" id="p-pv"><div class="prev" id="pvbox">◷ waiting for :3000…<br><span style="font-size:12px">start your app in Term 1, then this pane goes live</span></div></div>
+      <div class="rpane" id="p-ag"><div class="agent"><b>Lab agent</b> (scoped to step 2)<div class="apolicy">file ✓ allowed · shell ⚠ approval · network ⛔ forbidden</div><div style="color:#94a3b8">Ask for help; sensitive actions pause for your approval with a full audit trace.</div></div></div>
+    </div>
+    <footer class="checks"><button id="checkBtn">Check ✓</button><span class="verdict" id="verdict">no runs yet — read → edit/run → Check</span><span style="margin-left:auto;font-size:12px;color:#94a3b8" id="dirty">saved ✓</span></footer>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const $=s=>document.querySelector(s);
+const toast=m=>{const t=$("#toast");t.textContent=m;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),2200)};
+const steps=["1 · scaffold the app","2 · add GET /healthz ← you are here","3 · write a test","4 · preview in pane","5 · submit commit"];
+const files=["src/app.ts","src/index.ts","package.json","tests/health.test.ts"];
+let rail="steps",curStep=1;
+function drawRail(){const p=$("#rpane");
+if(rail==="steps")p.innerHTML=steps.map((s,i)=>`<div class="step ${i<curStep?"done":i===curStep?"cur":""}">${i<curStep?"✓ ":""}${s}</div>`).join("");
+if(rail==="files")p.innerHTML=`<div style="font-size:12px;color:#94a3b8">▾ workspace</div>`+files.map(f=>`<div class="file ${f==="src/app.ts"?"sel":""}">${f}</div>`).join("");
+if(rail==="projects")p.innerHTML=["demo-agent (current)","starter-hello","my-scratch"].map(n=>`<div class="proj ${n.startsWith("demo")?"sel":""}">${n}</div>`).join("")}
+document.querySelectorAll("[data-r]").forEach(b=>b.onclick=()=>{document.querySelectorAll("[data-r]").forEach(x=>x.classList.remove("on"));b.classList.add("on");rail=b.dataset.r;drawRail()});
+document.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>{document.querySelectorAll("[data-t]").forEach(x=>x.classList.remove("on"));b.classList.add("on");document.querySelectorAll(".rpane").forEach(p=>p.classList.remove("on"));$("#p-"+b.dataset.t).classList.add("on")});
+// editor dirty + preview readiness reflect buffer
+const hasRoute=()=>$("#editor2").value.includes("/healthz")||$("#editor").value.includes("/healthz");
+[$("#editor"),$("#editor2")].forEach(t=>t.addEventListener("input",()=>{$("#dirty").textContent="● unsaved…";clearTimeout(window._s);window._s=setTimeout(()=>{$("#dirty").textContent="saved ✓";const pv=$("#pvbox");if(hasRoute()){pv.classList.add("ready");pv.innerHTML="● LIVE — app on :3000 (mocked iframe)<br><span style='font-size:12px'>signed preview URL, 60s TTL (mocked)</span>"}},800)}));
+$("#diffL").onclick=e=>{e.preventDefault();toast("diff: +2 lines vs starter (mocked)")};
+$("#rstL").onclick=e=>{e.preventDefault();$("#editor2").value="// ✏️ your code here\n";toast("file reset to starter (mocked)")};
+// FAIL once then PASS
+let n=0;
+$("#checkBtn").onclick=()=>{const v=$("#verdict");n++;if(n===1){v.className="verdict fail";v.textContent="FAIL: GET /healthz → 404 · hint in editor · attempt recorded (mocked)"}else{v.className="verdict pass";v.textContent="PASS: command + file checks green · step 3 unlocked · progress saved (mocked)"}};
+// terminals share one mock fs
+function wire(inp,out){$(inp).addEventListener("keydown",e=>{if(e.key!=="Enter")return;const c=$(inp).value.trim();$(inp).value="";const o=$(out);let r;if(c.startsWith("curl"))r=hasRoute()?'{"ok":true}':"404";else if(c==="ls")r="src package.json tests";else r=`(mock) ran: ${c}`;o.textContent+=`student@session:~$ ${c}\n${r}\n`})}
+wire("#i1","#o1");wire("#i2","#o2");
+// reconnect banner blip at 15s
+setTimeout(()=>{$("#rec").style.display="inline";setTimeout(()=>$("#rec").style.display="none",3500)},15000);
+drawRail();
+</script>
+</body>
+</html>
