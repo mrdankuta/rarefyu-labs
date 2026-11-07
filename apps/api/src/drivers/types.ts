@@ -30,6 +30,14 @@ export interface ExecDriver {
   }>;
   /** Stream a workspace tarball (snapshot download). */
   snapshotTar(sessionId: string): Promise<ReadableStream<Uint8Array>>;
+  /** File tree under workspace (relative paths, traversal-guarded). */
+  listFiles(sessionId: string, sub?: string): Promise<{ path: string; type: "file" | "dir"; size?: number }[]>;
+  readFile(sessionId: string, path: string): Promise<{ content: string; truncated: boolean }>;
+  writeFile(sessionId: string, path: string, content: string): Promise<{ bytes: number }>;
+  /** Unified diff of current vs starter snapshot; empty string = identical. */
+  diffFile(sessionId: string, path: string): Promise<string>;
+  resetFile(sessionId: string, path: string): Promise<void>;
+  resetProject(sessionId: string): Promise<void>;
   /** Destroy workspace + shells. */
   destroy(sessionId: string): Promise<void>;
 }

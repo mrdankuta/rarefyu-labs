@@ -138,6 +138,71 @@ app.get("/api/playgrounds/:id/snapshot.tar", async (c) => {
   });
 });
 
+// --- Session filesystem (issue #5): explorer, read, save, diff, reset ---
+// All paths are workspace-relative; driver rejects traversal outside the root.
+app.get("/api/playgrounds/:id/files", async (c) => {
+  if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
+  try {
+    return c.json({ files: await driver.listFiles(c.req.param("id"), c.req.query("path") ?? "") });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+app.get("/api/playgrounds/:id/files/content", async (c) => {
+  if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
+  const path = c.req.query("path");
+  if (!path) return c.json({ error: "missing ?path=" }, 400);
+  try {
+    return c.json({ path, ...(await driver.readFile(c.req.param("id"), path)) });
+  } catch (err) {
+    const msg = (err as Error).message;
+    const status = msg.includes("not found") ? 404 : 400;
+    return c.json({ error: msg }, status as 404 | 400);
+  }
+});
+
+app.put("/api/playgrounds/:id/files/content", async (c) => {
+  if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.path || typeof body.content !== "string")
+    return c.json({ error: "need {path, content}" }, 400);
+  try {
+    const r = await driver.writeFile(c.req.param("id"), String(body.path), body.content);
+    sweepPlaygrounds();
+    return c.json({ path: String(body.path), ...r });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+app.get("/api/playgrounds/:id/files/diff", async (c) => {
+  if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
+  const path = c.req.query("path");
+  if (!path) return c.json({ error: "missing ?path=" }, 400);
+  try {
+    const diff = await driver.diffFile(c.req.param("id"), path);
+    return c.json({ path, changed: diff.length > 0, diff });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+app.post("/api/playgrounds/:id/files/reset", async (c) => {
+  if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
+  const body = await c.req.json().catch(() => ({}));
+  try {
+    if (body.path) {
+      await driver.resetFile(c.req.param("id"), String(body.path));
+      return c.json({ ok: true, path: String(body.path) });
+    }
+    await driver.resetProject(c.req.param("id"));
+    return c.json({ ok: true, project: true });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
 // Kill switch: one-button playground nuke (<60s: synchronous here).
 app.delete("/api/playgrounds", async (c) => {
   const result = nukePlaygrounds();
