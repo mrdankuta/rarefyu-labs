@@ -24,6 +24,15 @@ import {
   resolveUser,
 } from "./guided";
 import { LEARNER_POLICY, checkQuota, requireGuidedAuth } from "@rarefyu/auth";
+import {
+  announce,
+  extendSession,
+  getAudit,
+  getPresence,
+  labStats,
+  resetSession,
+  takeNotices,
+} from "./teach";
 
 /** Slice-1 stub store. Slice 2 replaces with Postgres + quota checks. */
 const sessions = new Map<string, unknown>();
@@ -344,6 +353,67 @@ app.delete("/api/guided-sessions/:id", async (c) => {
     return c.json({ error: "guided session not found" }, 404);
   await driver.destroy(c.req.param("id"));
   return c.json({ ok: true });
+});
+
+// --- Teach console (issue #8): presence, assist, stats, notices ---
+// Bench rule: any signed-in caller may instruct (production: org owner only).
+async function requireInstructor(c: {
+  req: { header: (h: string) => string | undefined };
+}) {
+  const userId = await resolveUser(c);
+  if (!userId) return null;
+  return userId;
+}
+
+app.get("/api/teach/presence", async (c) => {
+  if (!(await requireInstructor(c))) return c.json({ error: "sign-in required" }, 401);
+  return c.json({ presence: getPresence() });
+});
+
+app.post("/api/teach/reset", async (c) => {
+  const actor = await requireInstructor(c);
+  if (!actor) return c.json({ error: "sign-in required" }, 401);
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.sessionId) return c.json({ error: "need {sessionId}" }, 400);
+  const ok = await resetSession(actor, String(body.sessionId));
+  if (!ok) return c.json({ error: "session not found or destroyed" }, 404);
+  return c.json({ ok: true });
+});
+
+app.post("/api/teach/extend", async (c) => {
+  const actor = await requireInstructor(c);
+  if (!actor) return c.json({ error: "sign-in required" }, 401);
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.sessionId || body.minutes === undefined)
+    return c.json({ error: "need {sessionId, minutes}" }, 400);
+  const next = await extendSession(actor, String(body.sessionId), Number(body.minutes));
+  if (!next) return c.json({ error: "bad session or minutes (1–240)" }, 400);
+  return c.json({ ok: true, expiresAt: next });
+});
+
+app.post("/api/teach/announce", async (c) => {
+  const actor = await requireInstructor(c);
+  if (!actor) return c.json({ error: "sign-in required" }, 401);
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.message) return c.json({ error: "need {message}" }, 400);
+  return c.json({ ok: true, notice: announce(actor, String(body.message)) });
+});
+
+app.get("/api/teach/stats", async (c) => {
+  if (!(await requireInstructor(c))) return c.json({ error: "sign-in required" }, 401);
+  const track = c.req.query("track") ?? "demo-agent";
+  return c.json({ track, ...labStats(track) });
+});
+
+app.get("/api/teach/audit", async (c) => {
+  if (!(await requireInstructor(c))) return c.json({ error: "sign-in required" }, 401);
+  return c.json({ audit: getAudit() });
+});
+
+// Learner polls this for reset/extend/announce toasts (consumed on read).
+app.get("/api/playgrounds/:id/notices", (c) => {
+  if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
+  return c.json({ notices: takeNotices(c.req.param("id")) });
 });
 
 // Kill switch: one-button playground nuke (<60s: synchronous here).

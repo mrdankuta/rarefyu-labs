@@ -222,6 +222,27 @@
   }
   setInterval(pollPreview, 5000);
 
+  // --- learner notices (issue #8): reset/extend/announce toasts ---
+  let toast = $state("");
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+  function showToast(msg: string) {
+    toast = msg;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (toast = ""), 6000);
+  }
+  async function pollNotices() {
+    try {
+      const r = await fetch(`${API}/api/playgrounds/${id}/notices`);
+      if (!r.ok) return;
+      const body = await r.json();
+      for (const n of body.notices) {
+        showToast(n.message);
+        if (n.kind === "reset") { openPath = null; listFiles(); }
+      }
+    } catch { /* retry next tick */ }
+  }
+  setInterval(pollNotices, 15000);
+
   onMount(() => {
     loadSession().then(() => { listFiles(); attachTerm("Term 1"); loadTrack(); });
     view = new EditorView({
@@ -310,6 +331,7 @@
     </section>
   </div>
 </div>
+{#if toast}<div class="toast show">{toast}</div>{/if}
 <button class="fab" id="fabL" style:display={hideLearn ? "block" : "none"} onclick={() => (hideLearn = false)}>⟩</button>
 <button class="fab" id="fabR" style:display={hideRun ? "block" : "none"} onclick={() => (hideRun = false)}>⟨</button>
 
@@ -349,6 +371,7 @@
   .step{padding:8px 10px;border-radius:8px;margin-bottom:4px;font-size:14px;cursor:pointer}
   .step.cur{background:var(--ink);color:#fff}
   .hint{margin-top:10px;font-size:13px;border:1px solid;border-radius:8px;padding:8px 10px}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#18252f;color:#fff;padding:10px 18px;border-radius:8px;z-index:20}
   .checkbar{padding:12px 16px;border-top:1px solid #cbd5e1;background:#fff}
   .checkbar button{width:100%;padding:10px;border:0;border-radius:8px;background:var(--ink);color:#fff;font-size:15px;font-weight:700;cursor:pointer}
   .checkbar button:disabled{opacity:.45;cursor:not-allowed}
