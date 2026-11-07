@@ -52,6 +52,10 @@ export const SessionSchema = z.object({
   status: SessionStatusSchema,
   terminalWs: z.string(),
   previewBase: z.string(),
+  /** Anonymous playground policy (workspace-spec §5). Absent on guided sessions. */
+  mode: z.enum(["playground", "guided"]).default("playground"),
+  expiresAt: z.string().datetime().optional(),
+  snapshotUrl: z.string().optional(),
 });
 export type Session = z.infer<typeof SessionSchema>;
 
