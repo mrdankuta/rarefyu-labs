@@ -6,9 +6,11 @@
   import { EditorView, keymap } from "@codemirror/view";
   import { javascript } from "@codemirror/lang-javascript";
   import { oneDark } from "@codemirror/theme-one-dark";
-  import { Terminal } from "@xterm/xterm";
-  import { FitAddon } from "@xterm/addon-fit";
-  import "@xterm/xterm/css/xterm.css";
+  // xterm is client-only (CommonJS, needs DOM): dynamic-import inside onMount.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let XTerm: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let FitAddonCls: any = null;
 
   const id = $derived($page.params.id ?? "");
   const API = ""; // same-origin; Caddy routes /api/* → api
@@ -32,22 +34,30 @@
   // --- session + countdown ---
   interface Playground { id: string; status: string; expiresAt: string; warned?: boolean }
   let pg = $state<Playground | null>(null);
+  let loading = $state(true);
   let loadError = $state("");
   let ttlText = $state("--");
+  let ttlUrgent = $state(false);
   async function loadSession() {
+    loading = true;
+    loadError = "";
     try {
       const r = await fetch(`${API}/api/playgrounds/${id}`);
+      if (r.status === 404) throw new Error("gone — it expired or was stopped");
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       pg = await r.json();
       tickTtl();
     } catch (e) {
-      loadError = `session not found — open a playground first (${(e as Error).message})`;
+      loadError = `couldn't load this playground (${(e as Error).message})`;
+    } finally {
+      loading = false;
     }
   }
   function tickTtl() {
     if (!pg?.expiresAt) return;
     const ms = Date.parse(pg.expiresAt) - Date.now();
-    if (ms <= 0) { ttlText = "expired"; return; }
+    if (ms <= 0) { ttlText = "expired"; ttlUrgent = true; return; }
+    ttlUrgent = ms < 15 * 60_000;
     ttlText = `${String(Math.floor(ms / 3600000)).padStart(2, "0")}h${String(Math.floor((ms % 3600000) / 60000)).padStart(2, "0")}m`;
   }
   setInterval(tickTtl, 30000);
@@ -68,8 +78,9 @@
     const r = await fetch(`${API}/api/playgrounds/${id}/files?path=${encodeURIComponent(cwd)}`);
     if (r.ok) files = (await r.json()).files;
   }
+  let pendingPath = $state<string | null>(null);
   async function openFile(path: string) {
-    if (dirty && !confirm("Discard unsaved changes?")) return;
+    if (dirty && openPath !== path) { pendingPath = path; return; }
     const r = await fetch(`${API}/api/playgrounds/${id}/files/content?path=${encodeURIComponent(path)}`);
     if (!r.ok) { fileNotice = `cannot open ${path}`; return; }
     const body = await r.json();
@@ -98,8 +109,12 @@
     diffText = body.changed ? body.diff : "(identical to starter)";
     showDiff = true;
   }
+  let confirmResetFile = $state(false);
+  let confirmResetProject = $state(false);
+  let confirmStop = $state(false);
   async function resetFile() {
-    if (!openPath || !confirm(`Reset ${openPath} to starter?`)) return;
+    if (!openPath || !confirmResetFile) return;
+    confirmResetFile = false;
     const r = await fetch(`${API}/api/playgrounds/${id}/files/reset`, {
       method: "PUT" in {} ? "POST" : "POST",
       headers: { "content-type": "application/json" },
@@ -109,7 +124,8 @@
     else fileNotice = `reset failed: ${(await r.json()).error}`;
   }
   async function resetProject() {
-    if (!confirm("Reset the whole project to starter?")) return;
+    if (!confirmResetProject) return;
+    confirmResetProject = false;
     const r = await fetch(`${API}/api/playgrounds/${id}/files/reset`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -120,16 +136,36 @@
 
   // --- terminals (one xterm per term tab, shared session) ---
   let termEls: Record<string, HTMLDivElement | null> = {};
-  let termObjs: Record<string, { term: Terminal; ws: WebSocket; fit: FitAddon }> = {};
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let termObjs: Record<string, { term: any; ws: WebSocket; fit: any }> = {};
   function wsUrl(term: string) {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     return `${proto}//${location.host}/ws/terminal?session=${id}&term=${encodeURIComponent(term)}`;
   }
-  function attachTerm(name: string) {
+  function refitTerms() {
+    for (const t of Object.values(termObjs)) {
+      try { t.fit.fit(); } catch { /* hidden tab: refit on show */ }
+    }
+  }
+  function reconnectTerm(name: string) {
+    const old = termObjs[name];
+    if (old) { try { old.ws.close(); } catch {} delete termObjs[name]; }
+    setTimeout(() => attachTerm(name, true), 0);
+  }
+  async function attachTerm(name: string, force = false) {
     const el = termEls[name];
-    if (!el || termObjs[name]) return;
-    const term = new Terminal({ fontFamily: '"Source Code Pro",ui-monospace,Menlo,monospace', fontSize: 13, theme: { background: "#080808" } });
-    const fit = new FitAddon();
+    if (!el || (termObjs[name] && !force)) return;
+    if (termObjs[name] && force) delete termObjs[name];
+    if (!XTerm) {
+      const [{ Terminal }, { FitAddon }] = await Promise.all([
+        import("@xterm/xterm"),
+        import("@xterm/addon-fit"),
+      ]);
+      XTerm = Terminal; FitAddonCls = FitAddon;
+      await import("@xterm/xterm/css/xterm.css");
+    }
+    const term = new XTerm({ fontFamily: '"Source Code Pro",ui-monospace,Menlo,monospace', fontSize: 13, theme: { background: "#080808" } });
+    const fit = new FitAddonCls();
     term.loadAddon(fit);
     term.open(el);
     fit.fit();
@@ -141,13 +177,19 @@
         else if (m.type === "error") term.writeln(`\r\n[relay: ${m.error}]`);
       } catch { term.write(e.data); }
     };
+    ws.onclose = () => term.writeln("\r\n[disconnected — hit ⟳ to reconnect]");
     term.onData((d) => { if (ws.readyState === 1) ws.send(JSON.stringify({ data: d })); });
     termObjs[name] = { term, ws, fit };
+  }
+  function showRunTab(name: string) {
+    runTab = name;
+    // xterm needs a visible element to measure: refit after paint.
+    requestAnimationFrame(() => requestAnimationFrame(refitTerms));
   }
   function addTerm() {
     const n = `Term ${terms.length + 1}`;
     terms = [...terms.slice(0, 1), n, ...terms.slice(1)];
-    runTab = n;
+    showRunTab(n);
     setTimeout(() => attachTerm(n), 0);
   }
   function heartbeat() {
@@ -169,8 +211,11 @@
       if (r.ok) steps = (await r.json()).steps;
     } catch { /* track panel stays empty */ }
   }
+  let checking = $state(false);
+  let passedSteps = $state<Set<string>>(new Set());
   async function runCheck() {
-    if (!steps[curStep]) return;
+    if (!steps[curStep] || checking) return;
+    checking = true;
     checkHint = "running…";
     checkOk = null;
     const r = await fetch(`${API}/api/playgrounds/${id}/check`, {
@@ -178,28 +223,49 @@
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ track: TRACK, step: steps[curStep].slug }),
     });
-    const body = await r.json();
-    if (!r.ok) { checkHint = body.error; return; }
-    if (body.pass) { checkOk = true; checkHint = `PASS ✓ — step ${curStep + 1} of ${steps.length}`; if (curStep < steps.length - 1) curStep++; }
-    else { checkOk = false; checkHint = "FAIL: " + body.failures.map((f: { hint: string }) => f.hint).join(" · "); }
+    try {
+      const body = await r.json();
+      if (!r.ok) { checkHint = body.error; return; }
+      if (body.pass) {
+        checkOk = true;
+        passedSteps = new Set([...passedSteps, steps[curStep].slug]);
+        checkHint = `PASS ✓ — step ${curStep + 1} of ${steps.length}`;
+        if (curStep < steps.length - 1) curStep++;
+      }
+      else { checkOk = false; checkHint = "FAIL: " + body.failures.map((f: { hint: string }) => f.hint).join(" · "); }
+    } finally {
+      checking = false;
+    }
   }
   // --- isolated grading (issue #10): submit → official verdict ---
   let gradeInfo = $state("");
+  let grading = $state(false);
+  let confirmGrade = $state(false);
   async function submitGrade() {
-    if (!steps[curStep] || !confirm("Submit for official grading? (frozen snapshot, immutable record)")) return;
+    if (!steps[curStep] || grading) return;
+    if (!confirmGrade) { confirmGrade = true; return; }
+    confirmGrade = false;
+    grading = true;
     gradeInfo = "grading…";
     const r = await fetch(`${API}/api/playgrounds/${id}/grade`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ track: TRACK, step: steps[curStep].slug }),
     });
-    const body = await r.json();
-    gradeInfo = !r.ok ? body.error
-      : body.grade.pass ? `official: PASS ✓ · verdict ${body.grade.verdictHash.slice(0, 12)}`
-      : `official: FAIL — ${body.grade.failures.map((f: { hint: string }) => f.hint).join(" · ")} · ${body.grade.verdictHash.slice(0, 12)}`;
+    try {
+      const body = await r.json();
+      gradeInfo = !r.ok ? body.error
+        : body.grade.pass ? `official: PASS ✓ · verdict ${body.grade.verdictHash.slice(0, 12)}`
+        : `official: FAIL — ${body.grade.failures.map((f: { hint: string }) => f.hint).join(" · ")} · ${body.grade.verdictHash.slice(0, 12)}`;
+    } finally {
+      grading = false;
+    }
   }
+  let confirmSolve = $state(false);
   async function unlockSolution() {
-    if (!steps[curStep] || !confirm("Show the solution? (recorded as an unlock)")) return;
+    if (!steps[curStep]) return;
+    if (!confirmSolve) { confirmSolve = true; return; }
+    confirmSolve = false;
     const r = await fetch(`${API}/api/playgrounds/${id}/solve`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -301,8 +367,19 @@
   setInterval(pollNotices, 15000);
   $effect(() => { if (runTab === "Agent") refreshAgent(); });
 
+  function fileIcon(name: string, type: string): string {
+    if (type === "dir") return "▸";
+    const ext = name.split(".").pop()?.toLowerCase() ?? "";
+    if (["ts", "js", "svelte"].includes(ext)) return "◈";
+    if (["py"].includes(ext)) return "⬣";
+    if (["md", "txt"].includes(ext)) return "☰";
+    if (["json", "yaml", "yml", "toml"].includes(ext)) return "⚙";
+    if (["css", "html"].includes(ext)) return "◫";
+    return "◦";
+  }
   onMount(() => {
     loadSession().then(() => { listFiles(); attachTerm("Term 1"); loadTrack(); });
+    if (typeof window !== "undefined") window.addEventListener("resize", refitTerms);
     view = new EditorView({
       state: EditorState.create({
         doc: "// open a file from the explorer →\n",
@@ -319,6 +396,7 @@
     return () => {};
   });
   onDestroy(() => {
+    if (typeof window !== "undefined") window.removeEventListener("resize", refitTerms);
     view?.destroy();
     for (const t of Object.values(termObjs)) { try { t.ws.close(); } catch {} t.term.dispose(); }
   });
@@ -329,32 +407,52 @@
     <div class="l"><span class="logo">R</span><span class="title">playground › {id.slice(0, 8)}</span></div>
     <div class="r">
       <span class="dot" style:background={pg?.status === "active" ? "#22c55e" : "#f59e0b"}></span>
-      <span class="timer">{ttlText}</span>
-      <button class="ibtn" onclick={() => (runTab = "Preview")}>⛁ snapshot</button>
-      <button class="ibtn danger" onclick={() => confirm("Destroy this playground?") && fetch(`${API}/api/playgrounds/${id}`, { method: "DELETE" }).then(() => location.assign("/"))}>⏻ stop</button>
+      <span class="timer" class:urgent={ttlUrgent} title={ttlUrgent ? "less than 15 minutes left — save your work" : "time remaining"}>{ttlText}</span>
+      <button class="ibtn" onclick={() => showRunTab("Preview")}>⛁ snapshot</button>
+      {#if confirmStop}
+        <span class="confirm-inline">stop this playground? <button class="ibtn danger" onclick={() => fetch(`${API}/api/playgrounds/${id}`, { method: "DELETE" }).then(() => location.assign("/"))}>yes, stop</button> <button class="ibtn" onclick={() => (confirmStop = false)}>keep</button></span>
+      {:else}
+        <button class="ibtn danger" onclick={() => (confirmStop = true)}>⏻ stop</button>
+      {/if}
       <span class="avatar"></span>
     </div>
   </header>
   <div class="tabs">
     <div class="grp L"><span class="lbl">Learn</span><span class="tab static">Instructions</span><span class="tab static">IDE</span></div>
-    <div class="grp R"><span class="lbl">Run</span>{#each terms as t}<button class="tab" class:active={runTab === t} onclick={() => { runTab = t; setTimeout(() => attachTerm(t), 0); }}>{t}</button>{/each}<button class="tab" class:active={runTab === "Preview"} onclick={() => (runTab = "Preview")}>Preview</button><button class="tab" class:active={runTab === "Agent"} onclick={() => (runTab = "Agent")}>Agent</button><button class="add" onclick={addTerm}>+</button></div>
+    <div class="grp R"><span class="lbl">Run</span>{#each terms as t}<button class="tab" class:active={runTab === t} onclick={() => { showRunTab(t); setTimeout(() => attachTerm(t), 0); }}>{t}</button>{/each}<button class="tab" class:active={runTab === "Preview"} onclick={() => showRunTab("Preview")}>Preview</button><button class="tab" class:active={runTab === "Agent"} onclick={() => showRunTab("Agent")}>Agent</button><button class="add" onclick={addTerm}>+</button></div>
   </div>
   <div class="dock" class:noL={hideLearn} class:noR={hideRun}>
     <section class="steps">
       <div class="colbar">Learn <button onclick={() => (hideLearn = true)}>⟨ hide</button></div>
       <div class="body">
-        {#if loadError}<p style="color:#b91c1c">{loadError}</p>{/if}
+        {#if loading}
+          <div class="skel"></div><div class="skel" style="width:70%"></div><div class="skel" style="width:85%"></div>
+        {:else if loadError}
+          <p style="color:#b91c1c">{loadError}</p>
+          <p><button class="retry" onclick={loadSession}>↻ retry</button> <a href="/">← start a fresh playground</a></p>
+        {/if}
         <div class="meta">demo-agent · {steps.length ? `step ${curStep + 1} of ${steps.length}` : "free playground"}</div>
         {#each steps as s, i}
-          <div class="step" class:cur={i === curStep} onclick={() => (curStep = i, checkHint = "", checkOk = null)}>{s.title}</div>
+          <div class="step" class:cur={i === curStep} onclick={() => (curStep = i, checkHint = "", checkOk = null)}><span class="tick">{passedSteps.has(s.slug) ? "✓ " : ""}</span>{s.title}</div>
         {/each}
-        {#if steps[curStep]}<div class="assign">{@html renderMd(steps[curStep].assignment)}</div>{/if}
+        {#if steps[curStep]}<div class="assign">{@html renderMd(steps[curStep].assignment)}</div>
+        {/if}
       </div>
       <div class="checkbar">
-        <button onclick={runCheck}>Check ✓</button>
+        <button onclick={runCheck} disabled={checking}>{checking ? "checking…" : "Check ✓"}</button>
         {#if checkHint}<div class="hint" style:display="block" style:background={checkOk ? "#dcfce7" : "#fef9c3"} style:border-color={checkOk ? "#86efac" : "#fde047"}>{checkHint}</div>{/if}
-        <div style="margin-top:8px;text-align:center"><a href="#" style="font-size:12px;color:#64748b" onclick={(e) => (e.preventDefault(), unlockSolution())}>stuck? unlock the solution</a></div>
-        <button style="margin-top:8px;background:#fff;color:var(--ink);border:1px solid var(--ink)" onclick={submitGrade}>Submit for grade</button>
+        <div style="margin-top:8px;text-align:center">
+          {#if confirmSolve}
+            <span style="font-size:12px">show solution? it's recorded. <a href="#" onclick={(e) => (e.preventDefault(), unlockSolution())}>yes</a> · <a href="#" onclick={(e) => (e.preventDefault(), confirmSolve = false)}>no</a></span>
+          {:else}
+            <a href="#" style="font-size:12px;color:#64748b" onclick={(e) => (e.preventDefault(), unlockSolution())}>stuck? unlock the solution</a>
+          {/if}
+        </div>
+        {#if confirmGrade}
+          <p style="font-size:12px;text-align:center">frozen snapshot, immutable record. <button class="mini" onclick={submitGrade}>submit</button> <button class="mini ghost" onclick={() => (confirmGrade = false)}>cancel</button></p>
+        {:else}
+          <button style="margin-top:8px;background:#fff;color:var(--ink);border:1px solid var(--ink)" onclick={submitGrade} disabled={grading}>{grading ? "grading…" : "Submit for grade"}</button>
+        {/if}
         {#if gradeInfo}<div class="hint" style:display="block">{gradeInfo}</div>{/if}
       </div>
     </section>
@@ -362,15 +460,19 @@
       <div class="actbar"><button class="act active">🗀</button></div>
       <div class="side">
         <div class="fh">Explorer</div>
+        {#if cwd}<div class="crumb" onclick={() => (cwd = "", listFiles())}>‹ {cwd || "root"}</div>{/if}
         {#each files as f}
-          <div class="file" class:sel={openPath === f.path} onclick={() => f.type === "dir" ? (cwd = f.path, listFiles()) : openFile(f.path)}>{f.type === "dir" ? "▸ " : ""}{f.path.split("/").pop()}</div>
+          <div class="file" class:sel={openPath === f.path} title={f.path} onclick={() => f.type === "dir" ? (cwd = f.path, listFiles()) : openFile(f.path)}><span class="fic">{fileIcon(f.path.split("/").pop() ?? "", f.type)}</span>{f.path.split("/").pop()}</div>
         {/each}
-        {#if cwd}<div class="file" onclick={() => (cwd = "", listFiles())}>‹ .. root</div>{/if}
         <div class="fh" style="margin-top:10px">Project</div>
-        <div class="file" onclick={resetProject}>⟲ reset project</div>
+        {#if confirmResetProject}
+          <div class="file warn">reset all? <a href="#" onclick={(e) => (e.preventDefault(), resetProject())}>yes</a> · <a href="#" onclick={(e) => (e.preventDefault(), confirmResetProject = false)}>no</a></div>
+        {:else}
+          <div class="file" onclick={() => (confirmResetProject = true)}>⟲ reset project</div>
+        {/if}
       </div>
       <div class="ed">
-        <div class="edtab"><span>{dirty ? "● " : ""}{openPath ?? "no file open"}</span>{#if openPath}<a href="#" onclick={(e) => (e.preventDefault(), loadDiff())}>diff</a><a href="#" onclick={(e) => (e.preventDefault(), resetFile())}>reset file</a>{/if}<span style="margin-left:auto;color:#858585">{fileNotice}</span></div>
+        <div class="edtab"><span>{dirty ? "● " : ""}{openPath ?? "no file open"}</span>{#if openPath}<button class="savebtn" onclick={saveFile} disabled={!dirty}>save ⌘S</button><a href="#" onclick={(e) => (e.preventDefault(), loadDiff())}>diff</a>{#if confirmResetFile}<span>reset? <a href="#" onclick={(e) => (e.preventDefault(), resetFile())}>yes</a> · <a href="#" onclick={(e) => (e.preventDefault(), confirmResetFile = false)}>no</a></span>{:else}<a href="#" onclick={(e) => (e.preventDefault(), confirmResetFile = true)}>reset file</a>{/if}{/if}<span style="margin-left:auto;color:#858585">{fileNotice}</span></div>
         {#if showDiff}<pre class="diff">{diffText}</pre>{/if}
         <div class="code" bind:this={editorEl}></div>
       </div>
@@ -378,7 +480,7 @@
     <section class="right">
       <div class="colbar" style="border-bottom:1px solid #222">Run <button onclick={() => (hideRun = true)}>hide ⟩</button></div>
       {#each terms as t}
-        <div class="rpane term" class:on={runTab === t}><div class="termwrap" bind:this={termEls[t]}></div></div>
+        <div class="rpane term" class:on={runTab === t}><div class="termbar"><span>{t}</span><button onclick={() => reconnectTerm(t)} title="reconnect shell">⟳</button></div><div class="termwrap" bind:this={termEls[t]}></div></div>
       {/each}
       <div class="rpane" class:on={runTab === "Preview"}>
         {#if previewState.ready}
@@ -390,7 +492,7 @@
       <div class="rpane" class:on={runTab === "Agent"}>
         <div class="agent"><b>Lab agent</b>
           <div class="apolicy">file ✓ allowed · shell ⚠ approval · network/creds ⛔ forbidden</div>
-          <button class="abtn" onclick={() => { runTab = "Agent"; agentFix(); }}>✨ fix step 1 with the agent</button>
+          <button class="abtn" onclick={() => { showRunTab("Agent"); agentFix(); }}>✨ fix step 1 with the agent</button>
           {#if agentStatus}<p style="color:#94a3b8">run: {agentStatus}</p>{/if}
           {#each agentPending as p}
             <div class="approve">{p.tool} needs approval — {p.reason}<br /><code>{JSON.stringify(p.args).slice(0, 160)}</code><br />
@@ -405,6 +507,16 @@
     </section>
   </div>
 </div>
+{#if pendingPath}
+  <div class="modal-veil" onclick={() => (pendingPath = null)}></div>
+  <div class="modal" role="dialog" aria-label="unsaved changes">
+    <b>Unsaved changes</b>
+    <p>{openPath} has unsaved edits. Save first, or discard them?</p>
+    <button class="mini" onclick={() => { saveFile(); pendingPath = null; }}>save</button>
+    <button class="mini ghost" onclick={() => { dirty = false; const p = pendingPath; pendingPath = null; if (p) openFile(p); }}>discard</button>
+    <button class="mini ghost" onclick={() => (pendingPath = null)}>cancel</button>
+  </div>
+{/if}
 {#if toast}<div class="toast show">{toast}</div>{/if}
 <button class="fab" id="fabL" style:display={hideLearn ? "block" : "none"} onclick={() => (hideLearn = false)}>⟩</button>
 <button class="fab" id="fabR" style:display={hideRun ? "block" : "none"} onclick={() => (hideRun = false)}>⟨</button>
@@ -418,6 +530,21 @@
   .title{font-size:19px;font-weight:700}
   .dot{width:12px;height:12px;border-radius:99px;background:#22c55e}
   .timer{font-family:var(--mono);font-size:15px}
+  .timer.urgent{color:#b91c1c;font-weight:800}
+  .confirm-inline{font-size:13px}
+  .retry{background:var(--ink);color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer;font-weight:700}
+  .skel{height:12px;border-radius:6px;background:linear-gradient(90deg,#e2e8f0,#f1f5f9,#e2e8f0);margin-bottom:8px}
+  .tick{color:#16a34a;font-weight:800}
+  .step.cur .tick{color:#bbf7d0}
+  .crumb{font-family:var(--mono);font-size:12px;color:#93c5fd;cursor:pointer;padding:3px 8px}
+  .fic{display:inline-block;width:18px;color:#858585}
+  .file.warn{color:#fca5a5}
+  .savebtn{background:#2f81f7;color:#fff;border:0;border-radius:6px;font-size:12px;font-weight:700;padding:3px 10px;cursor:pointer}
+  .savebtn:disabled{opacity:.4;cursor:default}
+  .mini{background:var(--ink);color:#fff;border:0;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer}
+  .mini.ghost{background:transparent;color:#64748b;border:1px solid #cbd5e1}
+  .termbar{display:flex;align-items:center;justify-content:space-between;padding:4px 10px;font-size:11px;color:#858585;text-transform:uppercase;letter-spacing:.06em;flex:none}
+  .termbar button{background:none;border:1px solid #333;color:#aaa;border-radius:6px;cursor:pointer;font-size:12px;padding:1px 8px}
   .ibtn{border:0;background:transparent;color:var(--ink);border-radius:6px;padding:6px 8px;font-size:14px;cursor:pointer}
   .ibtn:hover{background:#dde3eb}.ibtn.danger{color:#ef4444}
   .avatar{width:32px;height:32px;border-radius:99px;background:radial-gradient(circle at 50% 35%,#c79a76 0 32%,#7b4a34 33% 60%,#2b2b2b 61%);border:1px solid #cbd5e1}
@@ -446,6 +573,10 @@
   .step.cur{background:var(--ink);color:#fff}
   .hint{margin-top:10px;font-size:13px;border:1px solid;border-radius:8px;padding:8px 10px}
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#18252f;color:#fff;padding:10px 18px;border-radius:8px;z-index:20}
+  .modal-veil{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:30}
+  .modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;color:var(--ink);border-radius:12px;padding:20px 24px;z-index:31;max-width:380px;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+  .modal p{font-size:13px;color:#475569}
+  .modal button{margin-right:8px}
   .checkbar{padding:12px 16px;border-top:1px solid #cbd5e1;background:#fff}
   .checkbar button{width:100%;padding:10px;border:0;border-radius:8px;background:var(--ink);color:#fff;font-size:15px;font-weight:700;cursor:pointer}
   .checkbar button:disabled{opacity:.45;cursor:not-allowed}
