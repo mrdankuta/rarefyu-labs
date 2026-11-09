@@ -44,6 +44,19 @@ describe("anonymous playground loop", () => {
       body: JSON.stringify({}),
     });
     expect(second.status).toBe(429);
+    const body = await second.json();
+    expect(body.existingId).toBe((await first.json()).id);
+  });
+
+  test("429 does not leak another owner's session id", async () => {
+    const first = await app.request("/api/playgrounds", { method: "POST", headers: H, body: JSON.stringify({}) });
+    expect(first.status).toBe(201);
+    const other = await app.request("/api/playgrounds", {
+      method: "POST",
+      headers: { ...H, "x-forwarded-for": "203.0.113.99" },
+      body: JSON.stringify({}),
+    });
+    expect(other.status).toBe(201);
   });
 
   test("expiry warns, snapshots, destroys; idle hibernates", async () => {

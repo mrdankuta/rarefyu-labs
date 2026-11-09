@@ -7,6 +7,7 @@ import {
   getPlayground,
   heartbeat,
   identityKey,
+  liveSessionFor,
   nukePlaygrounds,
   snapshotRetentionUntil,
   sweepPlaygrounds,
@@ -99,10 +100,12 @@ app.post("/api/playgrounds", async (c) => {
     });
   } catch (err) {
     const status = (err as { status?: number }).status ?? 500;
-    return c.json(
-      { error: (err as Error).message },
-      (status === 429 ? 429 : 500) as 429 | 500,
-    );
+    if (status === 429) {
+      // Same owner only: expose their own live session id so the UI can offer "resume".
+      const live = liveSessionFor(ownerFrom(c));
+      return c.json({ error: (err as Error).message, existingId: live?.id }, 429);
+    }
+    return c.json({ error: (err as Error).message }, 500);
   }
   try {
     // Provision exec workspace (warm-claim path lands here in the gVisor driver).
