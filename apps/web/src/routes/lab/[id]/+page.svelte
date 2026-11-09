@@ -321,6 +321,18 @@
   let agentStatus = $state("");
   let agentPending = $state<{ callId: string; tool: string; args: unknown; reason: string }[]>([]);
   let agentAudit = $state<{ seq: number; tool: string; decision: string; argsPreview: string; outputPreview?: string }[]>([]);
+  /** Audit UI never shows file bodies: replace `content` with its size, truncate the rest. */
+  function auditArgs(raw: string): string {
+    try {
+      const o = JSON.parse(raw) as Record<string, unknown>;
+      if (typeof o.content === "string") o.content = `‹${o.content.length} chars›`;
+      raw = JSON.stringify(o);
+    } catch {
+      // preview may be truncated JSON: blank out whatever follows "content":
+      raw = raw.replace(/("content":\s*")[^"]*"?/, "$1‹hidden›\"");
+    }
+    return raw.length > 80 ? raw.slice(0, 80) + "…" : raw;
+  }
   async function refreshAgent() {
     const [p, a] = await Promise.all([
       fetch(`${API}/api/playgrounds/${id}/agent/pending`),
@@ -505,7 +517,7 @@
             </div>
           {/each}
           {#each agentTrace as t}<div class="trace {t.ok ? '' : 'bad'}"><b>{t.tool}</b> {t.ok ? "✓" : "✗"} — {t.output.slice(0, 200)}</div>{/each}
-          {#if agentAudit.length}<div class="fh" style="margin-top:10px;color:#888;font-size:11px">AUDIT (redacted)</div>{#each agentAudit.slice(-8) as a}<div class="trace">#{a.seq} {a.tool} [{a.decision}] {a.argsPreview.slice(0, 120)}</div>{/each}{/if}
+          {#if agentAudit.length}<div class="fh" style="margin-top:10px;color:#888;font-size:11px">AUDIT (redacted)</div>{#each agentAudit.slice(-8) as a}<div class="trace">#{a.seq} {a.tool} [{a.decision}] {auditArgs(a.argsPreview)}</div>{/each}{/if}
         </div>
       </div>
     </section>
