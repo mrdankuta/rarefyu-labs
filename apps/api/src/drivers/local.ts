@@ -21,7 +21,7 @@ class Shell {
       terminal: {
         cols: 80,
         rows: 24,
-        data: (_t, d) => this.emit(this.decoder.decode(d, { stream: true })),
+        data: (_t: unknown, d: Uint8Array) => this.emit(this.decoder.decode(d, { stream: true })),
       },
     });
   }
