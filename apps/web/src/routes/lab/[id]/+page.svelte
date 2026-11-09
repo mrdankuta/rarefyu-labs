@@ -136,7 +136,8 @@
   }
 
   // --- terminals (one xterm per term tab, shared session) ---
-  let termEls: Record<string, HTMLDivElement | null> = {};
+  let termEls = $state<Record<string, HTMLDivElement | null>>({});
+  let termState = $state<Record<string, "connecting" | "connected" | "disconnected">>({});
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let termObjs: Record<string, { term: any; ws: WebSocket; fit: any }> = {};
   function wsUrl(term: string) {
@@ -171,6 +172,8 @@
     term.open(el);
     fit.fit();
     const ws = new WebSocket(wsUrl(name));
+    termState[name] = "connecting";
+    ws.onopen = () => { termState[name] = "connected"; };
     ws.onmessage = (e) => {
       try {
         const m = JSON.parse(e.data);
@@ -178,8 +181,8 @@
         else if (m.type === "error") term.writeln(`\r\n[relay: ${m.error}]`);
       } catch { term.write(e.data); }
     };
-    ws.onclose = () => term.writeln("\r\n[disconnected — hit ⟳ to reconnect]");
-    term.onData((d) => { if (ws.readyState === 1) ws.send(JSON.stringify({ data: d })); });
+    ws.onclose = () => { termState[name] = "disconnected"; term.writeln("\r\n[disconnected — hit ⟳ reconnect]"); };
+    term.onData((d: string) => { if (ws.readyState === 1) ws.send(JSON.stringify({ data: d })); });
     termObjs[name] = { term, ws, fit };
   }
   function showRunTab(name: string) {
@@ -481,7 +484,7 @@
     <section class="right">
       <div class="colbar" style="border-bottom:1px solid #222">Run <button onclick={() => (hideRun = true)}>hide ⟩</button></div>
       {#each terms as t}
-        <div class="rpane term" class:on={runTab === t}><div class="termbar"><span>{t}</span><button onclick={() => reconnectTerm(t)} title="reconnect shell">⟳</button></div><div class="termwrap" bind:this={termEls[t]}></div></div>
+        <div class="rpane term" class:on={runTab === t}><div class="termbar"><span class="tstate {termState[t] ?? 'connecting'}">● {termState[t] ?? "connecting"}</span><button class:alert={termState[t] === "disconnected"} onclick={() => reconnectTerm(t)} title="reconnect shell">⟳ reconnect</button></div><div class="termwrap" bind:this={termEls[t]}></div></div>
       {/each}
       <div class="rpane" class:on={runTab === "Preview"}>
         {#if previewState.ready}
@@ -556,8 +559,8 @@
   .tab.active{background:var(--ink);color:#fff;border-color:var(--ink)}
   .tab.static{font-weight:700}
   .add{border:1px dashed #64748b;background:transparent;color:#334155;border-radius:99px;width:34px;height:34px;font-size:18px;cursor:pointer;flex:none}
-  .dock{flex:1;display:grid;grid-template-columns:minmax(260px,32%) 1fr 1.2fr;min-height:0}
-  .dock.noL{grid-template-columns:0 1fr 1.2fr}.dock.noR{grid-template-columns:minmax(260px,32%) 1fr 0}
+  .dock{flex:1;display:grid;grid-template-columns:minmax(240px,26%) minmax(0,1fr) minmax(0,1.5fr);min-height:0}
+  .dock.noL{grid-template-columns:0 minmax(0,1fr) minmax(0,1.5fr)}.dock.noR{grid-template-columns:minmax(240px,26%) minmax(0,1fr) 0}
   .dock.noL .steps,.dock.noR .right{display:none}
   .colbar{display:flex;align-items:center;gap:6px;padding:6px 10px;font-size:11px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em}
   .colbar button{margin-left:auto;background:none;border:1px solid #475569;color:#cbd5e1;border-radius:6px;font-size:12px;cursor:pointer;padding:2px 8px}
@@ -589,7 +592,7 @@
   .file{font-family:var(--mono);padding:3px 8px;border-radius:6px;cursor:pointer;color:#ccc;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .file.sel{background:#2a2d2e;color:#fff}
   .ed{flex:1;background:#1f1f1f;display:flex;flex-direction:column;min-width:0}
-  .edtab{padding:8px 12px;font-size:13px;font-family:var(--mono);border-bottom:1px solid #2a2a2a;display:flex;gap:10px;align-items:center}
+  .edtab{flex-wrap:wrap;row-gap:4px;white-space:nowrap;padding:8px 12px;font-size:13px;font-family:var(--mono);border-bottom:1px solid #2a2a2a;display:flex;gap:10px;align-items:center}
   .edtab a{color:#93c5fd}
   .code{flex:1;overflow:auto}
   .code :global(.cm-editor){height:100%}
@@ -597,6 +600,8 @@
   .right{background:#080808;display:flex;flex-direction:column;min-height:0;min-width:0}
   .rpane{flex:1;min-height:0;overflow:auto;display:none}
   .rpane.on{display:flex;flex-direction:column}
+  .tstate{text-transform:none;letter-spacing:0}.tstate.connected{color:#22c55e}.tstate.disconnected{color:#ef4444}.tstate.connecting{color:#eab308}
+  .termbar button.alert{border-color:#ef4444;color:#fca5a5}
   .termwrap{flex:1;min-height:0;padding:8px}
   .termwrap :global(.xterm){height:100%}
   .prev{margin:12px;border:1px dashed #475569;border-radius:8px;min-height:200px;display:grid;place-items:center;color:#94a3b8;text-align:center;padding:16px}
