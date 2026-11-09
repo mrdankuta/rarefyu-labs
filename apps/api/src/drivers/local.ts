@@ -10,20 +10,20 @@ class Shell {
   ring = "";
   subs = new Set<(d: string) => void>();
   decoder = new TextDecoder();
-  encoder = new TextEncoder();
 
   constructor(public workspaceDir: string) {
-    // Login-less bash with workspace as cwd. stdio piped; stderr merged
-    // so full-screen tools degrade to line output (documented limit of
-    // the local stand-in; gVisor driver gives a real PTY).
+    // Real PTY (Bun terminal): job control, Ctrl-C/Z, full-screen tools.
+    // stdout/stderr are merged on the pty. The gVisor driver does the same
+    // via sandboxd exec with a tty.
     this.proc = Bun.spawn(["bash", "--noprofile", "--norc", "-i"], {
       cwd: workspaceDir,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
       env: { ...process.env, TERM: "xterm-256color", PS1: "\\u@playground:\\w$ " },
+      terminal: {
+        cols: 80,
+        rows: 24,
+        data: (_t, d) => this.emit(this.decoder.decode(d, { stream: true })),
+      },
     });
-    this.pump();
   }
 
   private emit(text: string) {
@@ -31,35 +31,9 @@ class Shell {
     for (const cb of this.subs) cb(text);
   }
 
-  private watch(stream: unknown) {
-    if (!stream || typeof stream === "number") return;
-    const reader = (stream as ReadableStream<Uint8Array>).getReader();
-    (async () => {
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          this.emit(this.decoder.decode(value, { stream: true }));
-        }
-      } catch {
-        /* process exited */
-      }
-    })();
-  }
-
-  private pump() {
-    this.watch(this.proc.stdout);
-    this.watch(this.proc.stderr);
-  }
-
   write(data: string) {
-    const stdin = this.proc.stdin as unknown as
-      | { write: (c: Uint8Array) => void }
-      | null
-      | number;
-    if (!stdin || typeof stdin === "number") return;
     try {
-      stdin.write(this.encoder.encode(data));
+      this.proc.terminal?.write(data);
     } catch {
       /* shell gone */
     }
