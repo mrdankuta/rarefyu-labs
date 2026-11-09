@@ -85,10 +85,11 @@
     if (!r.ok) { fileNotice = `cannot open ${path}`; return; }
     const body = await r.json();
     openPath = path;
-    dirty = false;
     showDiff = false;
     fileNotice = body.truncated ? "large file — showing first 256KB" : "";
     view?.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: body.content } });
+    // the dispatch above fires the updateListener synchronously; clear afterwards
+    dirty = false;
   }
   async function saveFile() {
     if (!openPath || !view) return;
