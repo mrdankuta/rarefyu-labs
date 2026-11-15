@@ -1,12 +1,12 @@
 import { app } from "./app";
 import { driver } from "./drivers";
-import { sweepPlaygrounds } from "./playgrounds";
+import { runLifecycle } from "./lifecycle";
 
 const port = Number(process.env.API_PORT ?? 3000);
 
 // Opportunistic expiry sweep every 60s (a worker owns this in production).
 setInterval(() => {
-  sweepPlaygrounds();
+  void runLifecycle();
 }, 60_000);
 
 /**

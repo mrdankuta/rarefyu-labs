@@ -7,12 +7,15 @@ import {
   getPlayground,
   heartbeat,
   identityKey,
+  CAPACITY_RETRY_SEC,
   liveSessionFor,
   nukePlaygrounds,
   snapshotRetentionUntil,
   sweepPlaygrounds,
+  takeWoke,
 } from "./playgrounds";
 import { driver } from "./drivers";
+import { lookupSnapshot, retireWorkspace, runLifecycle } from "./lifecycle";
 import { signPreview, verifyPreview } from "./preview";
 import { loadTrack } from "./tracks";
 import { getAttempts, getProgress, runCheck, runSolve } from "./checks";
@@ -99,11 +102,16 @@ app.post("/api/playgrounds", async (c) => {
       ttlMin: body.ttlMin ? Number(body.ttlMin) : undefined,
     });
   } catch (err) {
-    const status = (err as { status?: number }).status ?? 500;
-    if (status === 429) {
+    const { status = 500, code } = err as { status?: number; code?: string };
+    if (code === "quota_owner") {
       // Same owner only: expose their own live session id so the UI can offer "resume".
       const live = liveSessionFor(ownerFrom(c));
-      return c.json({ error: (err as Error).message, existingId: live?.id }, 429);
+      return c.json({ error: (err as Error).message, code, existingId: live?.id }, 429);
+    }
+    if (code === "quota_ip") return c.json({ error: (err as Error).message, code }, 429);
+    if (code === "at_capacity") {
+      c.header("Retry-After", String(CAPACITY_RETRY_SEC));
+      return c.json({ error: (err as Error).message, code, retryAfterSec: CAPACITY_RETRY_SEC }, 503);
     }
     return c.json({ error: (err as Error).message }, 500);
   }
@@ -122,7 +130,7 @@ app.post("/api/playgrounds", async (c) => {
     destroyPlayground(rec.id);
     return c.json({ error: `exec provisioning failed: ${(err as Error).message}` }, 500 as 500);
   }
-  sweepPlaygrounds(); // opportunistic expiry on each create
+  void runLifecycle(); // opportunistic lifecycle pass on each create
   return c.json(publicRec(rec as unknown as Record<string, unknown>), 201);
 });
 
@@ -132,9 +140,10 @@ app.get("/api/playgrounds/:id", (c) => {
   return c.json(publicRec(rec as unknown as Record<string, unknown>));
 });
 
-app.post("/api/playgrounds/:id/heartbeat", (c) => {
+app.post("/api/playgrounds/:id/heartbeat", async (c) => {
   const rec = heartbeat(c.req.param("id"));
   if (!rec) return c.json({ error: "playground not found" }, 404);
+  if (takeWoke(rec.id)) await driver.wake(rec.id).catch(() => {});
   noteHeartbeat(c.req.param("id"));
   return c.json(publicRec(rec as unknown as Record<string, unknown>));
 });
@@ -160,7 +169,7 @@ app.get("/api/playgrounds/:id/snapshot", (c) => {
 app.delete("/api/playgrounds/:id", async (c) => {
   const ok = destroyPlayground(c.req.param("id"));
   if (!ok) return c.json({ error: "playground not found" }, 404);
-  await driver.destroy(c.req.param("id"));
+  await retireWorkspace(c.req.param("id"));
   return c.json({ ok: true });
 });
 
@@ -191,7 +200,10 @@ app.put("/api/playgrounds/:id/layout", async (c) => {
 app.get("/api/playgrounds/:id/snapshot.tar", async (c) => {
   const rec = getPlayground(c.req.param("id"));
   if (!rec) return c.json({ error: "playground not found" }, 404);
-  const stream = await driver.snapshotTar(c.req.param("id"));
+  const snap = await lookupSnapshot(rec.id);
+  if (snap.kind === "expired") return c.json({ error: "snapshot expired" }, 410);
+  if (snap.kind === "none") return c.json({ error: "no snapshot available" }, 404);
+  const stream = snap.kind === "file" ? Bun.file(snap.path).stream() : await driver.snapshotTar(rec.id);
   return new Response(stream, {
     headers: {
       "content-type": "application/gzip",
@@ -231,7 +243,7 @@ app.put("/api/playgrounds/:id/files/content", async (c) => {
     return c.json({ error: "need {path, content}" }, 400);
   try {
     const r = await driver.writeFile(c.req.param("id"), String(body.path), body.content);
-    sweepPlaygrounds();
+    void runLifecycle();
     return c.json({ path: String(body.path), ...r });
   } catch (err) {
     return c.json({ error: (err as Error).message }, 400);

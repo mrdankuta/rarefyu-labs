@@ -49,6 +49,11 @@ function pushNotice(sessionId: string, kind: Notice["kind"], message: string) {
   notices.get(sessionId)!.push({ id: crypto.randomUUID(), kind, message, at: new Date().toISOString() });
 }
 
+/** Per-workspace system notice (e.g. expiry warning); shown once as a toast. */
+export function noticeFor(sessionId: string, message: string) {
+  pushNotice(sessionId, "announce", message);
+}
+
 /** Learner polls this; reading consumes (toast-once semantics). */
 export function takeNotices(sessionId: string): Notice[] {
   const mine = notices.get(sessionId) ?? [];

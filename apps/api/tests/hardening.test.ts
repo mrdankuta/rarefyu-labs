@@ -12,6 +12,8 @@ beforeEach(() => {
 
 describe("hardening + observability", () => {
   test("kill-switch drill: 50 sessions die inside 60s", async () => {
+    process.env.MAX_WORKSPACES_GLOBAL = "1000";
+    process.env.MAX_WORKSPACES_PER_IP = "1000";
     for (let i = 0; i < 50; i++) {
       const r = await app.request("/api/playgrounds", {
         method: "POST",
@@ -31,6 +33,8 @@ describe("hardening + observability", () => {
     expect(m).toContain('labs_provisions_total{outcome="ok"} 50');
     expect(m).toContain("labs_kills_total 50");
     expect(m).toContain("labs_sessions_live 0");
+    delete process.env.MAX_WORKSPACES_GLOBAL;
+    delete process.env.MAX_WORKSPACES_PER_IP;
   });
 
   test("metrics reflect checks and boot latency", async () => {

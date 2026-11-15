@@ -13,9 +13,16 @@
         headers: { "content-type": "application/json" },
         body: JSON.stringify({}),
       });
+      if (r.status === 503) {
+        const b = await r.json().catch(() => ({}));
+        const msg = (b.error ?? "we're at capacity right now") as string;
+        error = `Sorry, ${msg}. Please try again in about ${b.retryAfterSec ?? 30} seconds.`;
+        return;
+      }
       if (r.status === 429) {
-        existingId = (await r.json().catch(() => ({}))).existingId ?? null;
-        error = "You already have a live playground.";
+        const b = await r.json().catch(() => ({}));
+        existingId = b.existingId ?? null;
+        error = b.code === "quota_ip" ? "Too many playgrounds are running from your network. Close one and try again." : "You already have a live playground.";
         return;
       }
       if (!r.ok) throw new Error(`HTTP ${r.status}`);

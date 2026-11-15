@@ -41,6 +41,52 @@ export function liveSessionFor(ownerKey: string): PlaygroundRecord | undefined {
   return undefined;
 }
 
+export interface Limits {
+  /** Concurrent (non-destroyed) workspaces per owner identity (IP + cookie). */
+  perOwner: number;
+  /** Concurrent (non-destroyed) workspaces per client IP. */
+  perIp: number;
+  /** Running (creating|active) workspaces across the host; hibernated ones don't count. */
+  global: number;
+}
+
+/** Read limits at call time so ops can tune via env and tests can override. */
+export function getLimits(): Limits {
+  const n = (v: string | undefined, d: number) => (v !== undefined && Number.isFinite(Number(v)) ? Number(v) : d);
+  return {
+    perOwner: n(process.env.MAX_WORKSPACES_PER_OWNER, 1),
+    perIp: n(process.env.MAX_WORKSPACES_PER_IP, 3),
+    global: n(process.env.MAX_WORKSPACES_GLOBAL, 20),
+  };
+}
+
+export const CAPACITY_RETRY_SEC = 30;
+
+function capErr(message: string, status: number, code: string): Error {
+  const err = new Error(message);
+  Object.assign(err, { status, code });
+  return err;
+}
+
+const ipOf = (ownerKey: string) => ownerKey.split("::")[0];
+
+function assertCapacity(ownerKey: string) {
+  const lim = getLimits();
+  let mine = 0, sameIp = 0, running = 0;
+  for (const p of playgrounds.values()) {
+    if (p.status === "destroyed") continue;
+    if (p.ownerKey === ownerKey) mine++;
+    if (ipOf(p.ownerKey) === ipOf(ownerKey)) sameIp++;
+    if (p.status === "creating" || p.status === "active") running++;
+  }
+  if (mine >= lim.perOwner)
+    throw capErr(`quota exceeded: ${lim.perOwner} concurrent playground session${lim.perOwner === 1 ? "" : "s"}`, 429, "quota_owner");
+  if (sameIp >= lim.perIp)
+    throw capErr(`quota exceeded: ${lim.perIp} concurrent playground sessions per network`, 429, "quota_ip");
+  if (running >= lim.global)
+    throw capErr("the platform is at capacity right now", 503, "at_capacity");
+}
+
 export function createPlayground(opts: {
   ownerKey: string;
   labId?: string;
@@ -48,12 +94,7 @@ export function createPlayground(opts: {
   now?: number;
 }): PlaygroundRecord {
   const now = opts.now ?? Date.now();
-  const live = liveSessionFor(opts.ownerKey);
-  if (live) {
-    const err = new Error("quota exceeded: 1 concurrent playground session");
-    (err as { status?: number }).status = 429;
-    throw err;
-  }
+  assertCapacity(opts.ownerKey);
   const ttlMin = Math.min(Math.max(opts.ttlMin ?? DEFAULT_TTL_MIN, 1), MAX_TTL_MIN);
   const rec: PlaygroundRecord = {
     id: crypto.randomUUID(),
@@ -75,20 +116,39 @@ export function createPlayground(opts: {
   return rec;
 }
 
+/** Ids woken by the last heartbeat; the caller wakes their workspaces. */
+const wokeIds = new Set<string>();
+export function takeWoke(id: string): boolean {
+  return wokeIds.delete(id);
+}
+
 export function heartbeat(id: string, now?: number): PlaygroundRecord | undefined {
   const rec = playgrounds.get(id);
   if (!rec) return undefined;
   if (rec.status === "destroyed") return rec;
   const t = now ?? Date.now();
   rec.lastSeenAt = new Date(t).toISOString();
-  if (rec.status === "sleeping") rec.status = "active"; // wake on activity
+  if (rec.status === "sleeping") {
+    rec.status = "active"; // wake on activity
+    wokeIds.add(id);
+  }
   return rec;
 }
 
 /** Time-driven transitions: warn flag, expiry snapshot+destroy, idle hibernate. */
-export function sweepPlaygrounds(now?: number): { warned: number; hibernated: number; destroyed: number } {
+export interface SweepResult {
+  warned: number;
+  hibernated: number;
+  destroyed: number;
+  warnedIds: string[];
+  hibernatedIds: string[];
+  destroyedIds: string[];
+}
+
+export function sweepPlaygrounds(now?: number): SweepResult {
   const t = now ?? Date.now();
   let warned = 0, hibernated = 0, destroyed = 0;
+  const warnedIds: string[] = [], hibernatedIds: string[] = [], destroyedIds: string[] = [];
   for (const rec of playgrounds.values()) {
     if (rec.status === "destroyed") continue;
     const expires = Date.parse(rec.expiresAt!);
@@ -96,10 +156,12 @@ export function sweepPlaygrounds(now?: number): { warned: number; hibernated: nu
     if (expires - t <= WARN_BEFORE_EXPIRY_MIN * 60_000 && !rec.warned && expires > t) {
       rec.warned = true;
       warned++;
+      warnedIds.push(rec.id);
     }
     if (idleMs >= IDLE_HIBERNATE_MIN * 60_000 && rec.status === "active") {
       rec.status = "sleeping";
       hibernated++;
+      hibernatedIds.push(rec.id);
     }
     if (expires <= t) {
       // warn → one snapshot → destroy
@@ -109,9 +171,10 @@ export function sweepPlaygrounds(now?: number): { warned: number; hibernated: nu
       }
       rec.status = "destroyed";
       destroyed++;
+      destroyedIds.push(rec.id);
     }
   }
-  return { warned, hibernated, destroyed };
+  return { warned, hibernated, destroyed, warnedIds, hibernatedIds, destroyedIds };
 }
 
 /** Kill switch: nuke all playgrounds in <60s (in-memory: instant). */
