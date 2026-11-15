@@ -1,0 +1,4 @@
+#!/bin/sh
+# Check contract helper: print the learner-facing hint and fail the check.
+printf 'FAIL: %s\n' "$*"
+exit 1
