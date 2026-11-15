@@ -1,4 +1,4 @@
-import type { ExecDriver, TerminalHandle } from "./types";
+import type { DriverCapabilities, ExecDriver, TerminalHandle, WorkspaceAddress } from "./types";
 
 const ROOT =
   process.env.PLAYGROUND_ROOT ?? "/tmp/labs-playgrounds";
@@ -140,6 +140,28 @@ export class LocalDriver implements ExecDriver {
       stderr: "ignore",
     });
     return proc.stdout as unknown as ReadableStream<Uint8Array>;
+  }
+
+  capabilities(): DriverCapabilities {
+    return { isolation: "none", hibernate: true };
+  }
+
+  async hibernate(sessionId: string): Promise<void> {
+    for (const [key, shell] of this.shells) {
+      if (key.startsWith(`${sessionId}/`)) {
+        shell.kill();
+        this.shells.delete(key);
+      }
+    }
+  }
+
+  async wake(sessionId: string): Promise<void> {
+    // Shells are opened lazily by openTerminal; just make sure files exist.
+    await this.create(sessionId);
+  }
+
+  async address(_sessionId: string, port: number): Promise<WorkspaceAddress> {
+    return { host: "127.0.0.1", port };
   }
 
   async destroy(sessionId: string): Promise<void> {

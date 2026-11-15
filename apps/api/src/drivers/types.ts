@@ -1,9 +1,23 @@
 /**
- * ExecDriver interface — workspace-spec §6 step 1.
- * v1 backends: gvisor (runsc SandboxClaim) → LocalDriver here as the
- * dev/bench stand-in with identical semantics (workspace dir, tmux-persistent
- * shells, snapshot tarball). KubeVirt driver arrives in slice 6 (#7).
+ * ExecDriver interface (spec #30). v1 backends: Docker + gVisor on a single
+ * VPS ("docker-gvisor"); LocalDriver ("local") is the dev stand-in with
+ * identical semantics, enforced by the shared contract suite. KubeVirt/k3s
+ * are deferred (see spec #30).
  */
+
+/** How strongly the backend isolates a workspace from the host. */
+export type Isolation = "none" | "container" | "gvisor";
+
+export interface DriverCapabilities {
+  isolation: Isolation;
+  /** Can the driver hibernate (stop) and wake a workspace keeping its files? */
+  hibernate: boolean;
+}
+
+export interface WorkspaceAddress {
+  host: string;
+  port: number;
+}
 
 export interface TerminalHandle {
   termId: string;
@@ -17,7 +31,9 @@ export interface TerminalHandle {
 }
 
 export interface ExecDriver {
-  readonly backend: "gvisor" | "kubevirt" | "kata-fc" | "local";
+  readonly backend: "docker-gvisor" | "docker" | "local";
+  /** What this backend guarantees; callers refuse weak isolation in production. */
+  capabilities(): DriverCapabilities;
   /** Provision workspace + first shell for a playground id. */
   create(sessionId: string): Promise<{ workspaceDir: string }>;
   /** Open (or reattach to) a named terminal in the session. */
@@ -38,6 +54,12 @@ export interface ExecDriver {
   diffFile(sessionId: string, path: string): Promise<string>;
   resetFile(sessionId: string, path: string): Promise<void>;
   resetProject(sessionId: string): Promise<void>;
+  /** Stop running processes/terminals but keep the workspace files. Idempotent. */
+  hibernate(sessionId: string): Promise<void>;
+  /** Bring a hibernated workspace back (files intact). Idempotent; no-op if running. */
+  wake(sessionId: string): Promise<void>;
+  /** Where a TCP port inside the workspace can be reached from the API (preview proxy). */
+  address(sessionId: string, port: number): Promise<WorkspaceAddress>;
   /** Destroy workspace + shells. */
   destroy(sessionId: string): Promise<void>;
 }

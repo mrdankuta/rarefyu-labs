@@ -1,5 +1,8 @@
 # RarefyU Labs — Workspace Spec v2 (from wayfinding map #12)
 
+> **Superseded in part by [#30](https://github.com/mrdankuta/rarefyu-labs/issues/30).** The execution backend is now Docker + gVisor on a single ordinary VPS. The k3s / KubeVirt / Firecracker sequencing and build order below no longer apply to v1. Product modes, authoring format, check contract and the anonymous playground policy remain in force.
+
+
 Supersedes the shell/authoring portions of `spec.md` (v2 §4–5) and re-sequences
 `plan.md` Phase 1. Source of decisions: map #12 (all six tickets closed).
 Prototypes: `prototype/hybrid-shell` (locked layout), `prototype/original-shell`,

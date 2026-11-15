@@ -1,5 +1,8 @@
 # RarefyU Labs — Build Plan (v2, Bun + Better-Auth + Firecracker-first on Hetzner)
 
+> **Superseded in part by [#30](https://github.com/mrdankuta/rarefyu-labs/issues/30).** The execution backend is now Docker + gVisor on a single ordinary VPS. The k3s / KubeVirt / Firecracker sequencing and build order below no longer apply to v1. Product modes, authoring format, check contract and the anonymous playground policy remain in force.
+
+
 Spec: `spec.md`. Vertical slices; each task = one session, system stays working. Verify commands use **bun**. Contract/migration risks noted.
 
 ## Repo layout
