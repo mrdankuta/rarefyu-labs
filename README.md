@@ -23,6 +23,8 @@ bun run dev:web   # :5173  -> workspace shell placeholder
 ```
 
 Copy `.env.example` to `.env` before anything that touches Postgres or auth.
+Prefer your own machine? `scripts/labs-local.sh` runs the same lab in Docker (see `docs/labs-platform/local-run.md`).
+
 Dev defaults to `DRIVER=local` (host processes, no isolation). Try containers
 with `DRIVER=docker bun run dev:api` after `docker build -t rarefyu/base-lab:dev images/base-lab`.
 No KVM / nested virtualization is needed anywhere.

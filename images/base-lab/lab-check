@@ -1,3 +1,27 @@
 #!/bin/sh
-# Stub: real validators (command/http/file) arrive in slice 5.
-echo "lab-check 0.1.0 (stub)"
+# lab-check [step]: run a lab step's check script against the current workspace.
+# Same check scripts the hosted platform runs (tracks/<track>/<step>/check), so a
+# local run and the hosted run give the same verdict.
+#   lab-check            list steps
+#   lab-check 01-scaffold
+# Env: LAB_TRACK (default demo-agent), LAB_TRACKS_DIR (default /lab/tracks)
+TRACK="${LAB_TRACK:-demo-agent}"
+DIR="${LAB_TRACKS_DIR:-/lab/tracks}/$TRACK"
+
+case "${1:-}" in
+  -h|--help)
+    echo "usage: lab-check [step]   (track: $TRACK; set LAB_TRACK to change)"
+    exit 0 ;;
+  "")
+    [ -d "$DIR" ] || { echo "no lab mounted at $DIR (hosted labs run checks from the Check button)"; exit 0; }
+    echo "steps in $TRACK:"
+    for d in "$DIR"/*/; do [ -f "${d}check" ] && echo "  $(basename "$d")"; done
+    exit 0 ;;
+esac
+
+STEP="$1"
+case "$STEP" in *[!a-z0-9-]*) echo "invalid step name" >&2; exit 2 ;; esac
+CHECK="$DIR/$STEP/check"
+[ -f "$CHECK" ] || { echo "no check for step '$STEP' in $TRACK" >&2; exit 2; }
+cd "${LAB_WORKDIR:-$HOME/workspace}" 2>/dev/null || true
+sh "$CHECK"
