@@ -81,7 +81,15 @@ function capErr(message: string, status: number, code: string): Error {
   return err;
 }
 
-const ipOf = (ownerKey: string) => ownerKey.split("::")[0];
+/** ownerKey = `${ip}::${cookie}` (or `user:<id>`); the ip may itself contain "::" (IPv6), the cookie never does. */
+export const ipOf = (ownerKey: string) => {
+  const i = ownerKey.lastIndexOf("::");
+  return i < 0 ? ownerKey : ownerKey.slice(0, i);
+};
+export const cookieOfKey = (ownerKey: string) => {
+  const i = ownerKey.lastIndexOf("::");
+  return i < 0 ? "anon" : ownerKey.slice(i + 2) || "anon";
+};
 
 function assertCapacity(ownerKey: string) {
   if (creationPaused) throw capErr("new playgrounds are temporarily paused", 503, "paused");

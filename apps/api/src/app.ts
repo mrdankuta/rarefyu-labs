@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { setCookie } from "hono/cookie";
 import { DEFAULT_LAYOUT, LayoutSchema, SessionSchema } from "@rarefyu/lab-sdk";
 import {
+  cookieOfKey,
   createPlayground,
   destroyPlayground,
   getAllPlaygroundIds,
@@ -19,6 +20,7 @@ import {
 } from "./playgrounds";
 import { driver } from "./drivers";
 import { reconcile } from "./reconcile";
+import { auditEvent } from "./teach";
 import { lookupSnapshot, retireWorkspace, runLifecycle } from "./lifecycle";
 import { PREVIEW_TTL_SEC, signPreview } from "./preview";
 import { resolvePreviewTarget } from "./preview-proxy";
@@ -112,7 +114,7 @@ async function canAccess(headers: Headers, rec: { userId?: string; ownerKey: str
   if (process.env.ENFORCE_OWNERSHIP === "0") return true;
   const c = { req: { header: (n: string) => headers.get(n) ?? undefined } };
   if (rec.userId) return (await resolveUser(c)) === rec.userId;
-  const recCookie = rec.ownerKey.split("::")[1] ?? "anon";
+  const recCookie = cookieOfKey(rec.ownerKey);
   return recCookie === "anon" || cookieOf(c) === recCookie;
 }
 export { canAccess };
@@ -194,6 +196,7 @@ app.post("/api/playgrounds", async (c) => {
       throw err;
     }
     noteProvisionOk();
+    auditEvent(who.userId ? `user:${who.userId}` : "student", "create", rec.id, rec.mode);
   } catch (err) {
     // No orphan records: failed provisioning releases the quota slot.
     destroyPlayground(rec.id);
@@ -220,7 +223,10 @@ app.get("/api/playgrounds/:id", (c) => {
 app.post("/api/playgrounds/:id/heartbeat", async (c) => {
   const rec = heartbeat(c.req.param("id"));
   if (!rec) return c.json({ error: "playground not found" }, 404);
-  if (takeWoke(rec.id)) await driver.wake(rec.id).catch(() => {});
+  if (takeWoke(rec.id)) {
+    await driver.wake(rec.id).catch(() => {});
+    auditEvent("student", "wake", rec.id);
+  }
   noteHeartbeat(c.req.param("id"));
   return c.json(publicRec(rec as unknown as Record<string, unknown>));
 });
@@ -247,6 +253,7 @@ app.delete("/api/playgrounds/:id", async (c) => {
   const ok = destroyPlayground(c.req.param("id"));
   if (!ok) return c.json({ error: "playground not found" }, 404);
   await retireWorkspace(c.req.param("id"));
+  auditEvent("student", "stop", c.req.param("id"));
   return c.json({ ok: true });
 });
 
@@ -644,6 +651,7 @@ app.delete("/api/playgrounds", async (c) => {
   const held = new Set([...getAllPlaygroundIds(), ...(await driver.list().catch(() => []))]);
   await Promise.all([...held].map((id) => driver.destroy(id).catch(() => {})));
   noteKill(result.destroyed);
+  auditEvent("operator", "kill-switch", undefined, `${result.destroyed} destroyed${isCreationPaused() ? ", creation paused" : ""}`);
   return c.json({ ok: true, ...result, paused: isCreationPaused() });
 });
 
@@ -652,6 +660,7 @@ app.post("/api/admin/creation", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   if (typeof body.paused !== "boolean") return c.json({ error: "need {paused: boolean}" }, 400);
   setCreationPaused(body.paused);
+  auditEvent("operator", body.paused ? "pause-creation" : "resume-creation");
   return c.json({ paused: isCreationPaused() });
 });
 

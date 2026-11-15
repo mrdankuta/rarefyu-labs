@@ -1,5 +1,8 @@
 # Proxmox Lab Bench — spare laptops for dev/test (issue #2)
 
+> **Deferred (see #30).** v1 uses a single ordinary VPS with Docker + gVisor (`infra/RUNBOOK.md`). Kept for a future KubeVirt path.
+
+
 The Hetzner vServer (`labs-01`) has no nested virtualization, so VM-backed
 tiers can never run there. These spare laptops are the private lab bench
 where KVM work happens; the vServer stays the public endpoint (DNS, site)

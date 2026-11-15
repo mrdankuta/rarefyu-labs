@@ -129,3 +129,20 @@ describe("reattach", () => {
     await driver.destroy(id);
   });
 });
+
+describe("IPv6 clients (e.g. a reverse proxy on ::1)", () => {
+  test("ownership and per-IP counting work when the client address contains '::'", async () => {
+    const res = await create({ "x-forwarded-for": "::1" });
+    expect(res.status).toBe(201);
+    const id = (await res.json()).id;
+    const sid = cookieFrom(res)!;
+    expect((await app.request(`/api/playgrounds/${id}/layout`, { headers: { cookie: `rfy_sid=${sid}` } })).status).toBe(200);
+    expect((await app.request(`/api/playgrounds/${id}/layout`, { headers: { cookie: "rfy_sid=other" } })).status).toBe(403);
+    const v6 = await create({ "x-forwarded-for": "2001:db8::7" });
+    expect(v6.status).toBe(201);
+    const id2 = (await v6.json()).id;
+    expect((await app.request(`/api/playgrounds/${id2}/layout`, { headers: { cookie: `rfy_sid=${cookieFrom(v6)}` } })).status).toBe(200);
+    await driver.destroy(id);
+    await driver.destroy(id2);
+  });
+});

@@ -1,6 +1,6 @@
-# Bench default: plain HTTP (no public DNS / ACME on the laptop).
-# Production (Hetzner): replace :80 with https://labs.<domain> + tls <email>.
-:80 {
+# Plain HTTP by default; set SITE_ADDRESS=labs.example.com in .env for automatic HTTPS.
+# Site address comes from SITE_ADDRESS (default ":80" = plain HTTP; set to your domain for automatic HTTPS).
+{$SITE_ADDRESS::80} {
   # Security headers on every response (bench + prod).
   header {
     X-Content-Type-Options nosniff
@@ -11,8 +11,8 @@
     # attribute; the shell itself must never be framed.
     -Server
   }
-  reverse_proxy /api/* api:3000
-  reverse_proxy /ws/* api:3000
-  reverse_proxy /preview/* api:3000
-  reverse_proxy web:3000
+  reverse_proxy /api/* 127.0.0.1:3000
+  reverse_proxy /ws/* 127.0.0.1:3000
+  reverse_proxy /preview/* 127.0.0.1:3000
+  reverse_proxy 127.0.0.1:3001
 }

@@ -40,6 +40,11 @@ function log(actor: string, action: string, sessionId?: string, detail?: string)
   audit.push({ id: crypto.randomUUID(), actor, action, sessionId, detail, at: new Date().toISOString() });
 }
 
+/** Record a workspace lifecycle / operator event in the same trail instructors see. */
+export function auditEvent(actor: string, action: string, sessionId?: string, detail?: string) {
+  log(actor, action, sessionId, detail);
+}
+
 export function getAudit(): AuditEntry[] {
   return [...audit];
 }

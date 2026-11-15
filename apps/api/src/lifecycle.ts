@@ -7,7 +7,7 @@ import {
   sweepPlaygrounds,
   type SweepResult,
 } from "./playgrounds";
-import { noticeFor } from "./teach";
+import { auditEvent, noticeFor } from "./teach";
 
 /**
  * Workspace lifecycle policy applied to real workspaces (spec #30):
@@ -51,6 +51,8 @@ export async function lookupSnapshot(id: string, now = Date.now()): Promise<Snap
 /** One lifecycle pass: apply policy transitions to the real workspaces. */
 export async function runLifecycle(now?: number): Promise<SweepResult> {
   const r = sweepPlaygrounds(now);
+  for (const id of r.hibernatedIds) auditEvent("system", "hibernate", id, "idle");
+  for (const id of r.destroyedIds) auditEvent("system", "expire", id, "ttl reached; snapshot taken then destroyed");
   for (const id of r.warnedIds) {
     noticeFor(id, "Your workspace expires in about 15 minutes — download a snapshot or save your work.");
   }

@@ -1,5 +1,8 @@
 # Hetzner Runbook — single-box host for RarefyU Labs (issue #2)
 
+> **Deferred (see #30).** v1 runs on one ordinary VPS with Docker + gVisor; see `infra/RUNBOOK.md` and `infra/provision-vps.sh`. This document describes the k3s/KubeVirt dedicated-metal path that is only needed once a course requires VMs.
+
+
 Target: 1× Hetzner dedicated (AX41/AX52 class, 64GB+ RAM, NVMe),
 Ubuntu 24.04, running k3s + the compose control plane. Multi-node
 join/drain is slice 10 (`infra/join-node.sh`, not this file).

@@ -1,4 +1,5 @@
 import { driver } from "./drivers";
+import { auditEvent } from "./teach";
 import { getAllPlaygroundIds, getPlayground } from "./playgrounds";
 
 export interface ReconcileResult {
@@ -21,6 +22,7 @@ export async function reconcile(): Promise<ReconcileResult> {
     if (!rec || rec.status === "destroyed") {
       await driver.destroy(id).catch(() => {});
       orphansDestroyed.push(id);
+      auditEvent("system", "reconcile-orphan", id, "workspace had no live session; destroyed");
     }
   }
   const lost: string[] = [];
@@ -33,6 +35,7 @@ export async function reconcile(): Promise<ReconcileResult> {
       rec.status = "destroyed";
       rec.lostReason = "workspace missing from backend";
       lost.push(id);
+      auditEvent("system", "reconcile-lost", id, rec.lostReason);
     }
   }
   return { orphansDestroyed, lost };

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# DEFERRED (see #30): this is the k3s/KubeVirt dedicated-metal bootstrap. For v1 use infra/provision-vps.sh.
 # Bootstrap ONE Hetzner dedicated node (AX line, Ubuntu 24.04) for RarefyU Labs.
 #
 #   curl -sfL https://raw.githubusercontent.com/mrdankuta/rarefyu-labs/main/infra/hetzner-init.sh \
