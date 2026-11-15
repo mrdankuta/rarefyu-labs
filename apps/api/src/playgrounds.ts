@@ -20,14 +20,25 @@ export interface PlaygroundRecord extends Session {
   lastSeenAt: string;
   warned: boolean;
   snapshotAt?: string;
+  /** Set when the backend lost this workspace (reconciler). */
+  lostReason?: string;
   /** Persisted tab layout (spec #30); undefined = default layout. */
   layout?: Layout;
 }
 
 const playgrounds = new Map<string, PlaygroundRecord>();
 
+let creationPaused = false;
+export function setCreationPaused(v: boolean) {
+  creationPaused = v;
+}
+export function isCreationPaused() {
+  return creationPaused;
+}
+
 export function clearPlaygrounds() {
   playgrounds.clear();
+  creationPaused = false;
 }
 
 export function identityKey(ip: string, cookieKey: string): string {
@@ -71,6 +82,7 @@ function capErr(message: string, status: number, code: string): Error {
 const ipOf = (ownerKey: string) => ownerKey.split("::")[0];
 
 function assertCapacity(ownerKey: string) {
+  if (creationPaused) throw capErr("new playgrounds are temporarily paused", 503, "paused");
   const lim = getLimits();
   let mine = 0, sameIp = 0, running = 0;
   for (const p of playgrounds.values()) {

@@ -62,6 +62,8 @@ export interface ExecDriver {
   wake(sessionId: string): Promise<void>;
   /** Where a TCP port inside the workspace can be reached from the API (preview proxy). */
   address(sessionId: string, port: number): Promise<WorkspaceAddress>;
+  /** Ids of every workspace the backend currently holds (running or hibernated). */
+  list(): Promise<string[]>;
   /** Destroy workspace + shells. */
   destroy(sessionId: string): Promise<void>;
 }

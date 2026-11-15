@@ -15,6 +15,7 @@
       });
       if (r.status === 503) {
         const b = await r.json().catch(() => ({}));
+        if (b.code === "paused") { error = "New playgrounds are paused right now. Please check back soon."; return; }
         const msg = (b.error ?? "we're at capacity right now") as string;
         error = `Sorry, ${msg}. Please try again in about ${b.retryAfterSec ?? 30} seconds.`;
         return;

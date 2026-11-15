@@ -10,11 +10,14 @@ import {
   CAPACITY_RETRY_SEC,
   liveSessionFor,
   nukePlaygrounds,
+  isCreationPaused,
+  setCreationPaused,
   snapshotRetentionUntil,
   sweepPlaygrounds,
   takeWoke,
 } from "./playgrounds";
 import { driver } from "./drivers";
+import { reconcile } from "./reconcile";
 import { lookupSnapshot, retireWorkspace, runLifecycle } from "./lifecycle";
 import { signPreview, verifyPreview } from "./preview";
 import { loadTrack } from "./tracks";
@@ -109,6 +112,7 @@ app.post("/api/playgrounds", async (c) => {
       return c.json({ error: (err as Error).message, code, existingId: live?.id }, 429);
     }
     if (code === "quota_ip") return c.json({ error: (err as Error).message, code }, 429);
+    if (code === "paused") return c.json({ error: (err as Error).message, code }, 503);
     if (code === "at_capacity") {
       c.header("Retry-After", String(CAPACITY_RETRY_SEC));
       return c.json({ error: (err as Error).message, code, retryAfterSec: CAPACITY_RETRY_SEC }, 503);
@@ -523,11 +527,33 @@ app.get("/api/playgrounds/:id/notices", (c) => {
   return c.json({ notices: takeNotices(c.req.param("id")) });
 });
 
-// Kill switch: one-button playground nuke (<60s: synchronous here).
+// --- Operator controls (kill switch, pause, reconcile). If ADMIN_TOKEN is set, a bearer token is required. ---
+function adminOk(c: { req: { header: (h: string) => string | undefined } }) {
+  const t = process.env.ADMIN_TOKEN;
+  return !t || c.req.header("authorization") === `Bearer ${t}`;
+}
+
+// Kill switch: one-button nuke of every workspace; ?pause=1 also stops new creation.
 app.delete("/api/playgrounds", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "operator token required" }, 401);
+  if (c.req.query("pause") === "1") setCreationPaused(true);
   const result = nukePlaygrounds();
-  // Destroy exec workspaces best-effort; records already marked destroyed.
-  await Promise.all(getAllPlaygroundIds().map((id) => driver.destroy(id)));
+  // Destroy everything the backend holds (not just known records), in parallel.
+  const held = new Set([...getAllPlaygroundIds(), ...(await driver.list().catch(() => []))]);
+  await Promise.all([...held].map((id) => driver.destroy(id).catch(() => {})));
   noteKill(result.destroyed);
-  return c.json({ ok: true, ...result });
+  return c.json({ ok: true, ...result, paused: isCreationPaused() });
+});
+
+app.post("/api/admin/creation", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "operator token required" }, 401);
+  const body = await c.req.json().catch(() => ({}));
+  if (typeof body.paused !== "boolean") return c.json({ error: "need {paused: boolean}" }, 400);
+  setCreationPaused(body.paused);
+  return c.json({ paused: isCreationPaused() });
+});
+
+app.post("/api/admin/reconcile", async (c) => {
+  if (!adminOk(c)) return c.json({ error: "operator token required" }, 401);
+  return c.json(await reconcile());
 });

@@ -171,6 +171,11 @@ export class LocalDriver implements ExecDriver {
     return { host: "127.0.0.1", port };
   }
 
+  async list(): Promise<string[]> {
+    const r = await Bun.$`ls -1 ${ROOT}`.quiet().nothrow();
+    return r.exitCode === 0 ? r.stdout.toString().split("\n").map((l: string) => l.trim()).filter(Boolean) : [];
+  }
+
   async destroy(sessionId: string): Promise<void> {
     for (const [key, shell] of this.shells) {
       if (key.startsWith(`${sessionId}/`)) {

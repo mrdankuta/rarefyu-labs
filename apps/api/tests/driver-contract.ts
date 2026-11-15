@@ -184,6 +184,16 @@ export function driverContract(name: string, make: () => ExecDriver, opts?: { sk
       expect(a.port).toBeGreaterThan(0);
     });
 
+    t("list reports live workspaces and forgets destroyed ones", async () => {
+      const id = sid("list");
+      await d.create(id);
+      expect(await d.list()).toContain(id);
+      await d.hibernate(id);
+      expect(await d.list()).toContain(id); // hibernated still held
+      await d.destroy(id);
+      expect(await d.list()).not.toContain(id);
+    });
+
     t("destroy removes the workspace", async () => {
       const id = sid("destroy");
       await d.writeFile(id, "gone.txt", "bye");

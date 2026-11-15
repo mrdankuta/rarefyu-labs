@@ -265,6 +265,20 @@ export class DockerDriver implements ExecDriver {
     return { host, port };
   }
 
+  async list(): Promise<string[]> {
+    // Any resource carrying our label counts: a half-created workspace (network/volume only) is still ours.
+    const ids = new Set<string>();
+    for (const [kind, fmt] of [
+      [["ps", "-a"], '{{.Label "rfy.workspace"}}'],
+      [["volume", "ls"], '{{.Label "rfy.workspace"}}'],
+      [["network", "ls"], '{{.Label "rfy.workspace"}}'],
+    ] as const) {
+      const r = await this.docker([...kind, "--filter", `label=${LABEL}`, "--format", fmt]);
+      for (const l of r.stdout.split("\n")) if (l.trim()) ids.add(l.trim());
+    }
+    return [...ids];
+  }
+
   async destroy(sessionId: string): Promise<void> {
     this.dropAttaches(sessionId);
     await this.docker(["rm", "-f", this.cname(sessionId)]);
