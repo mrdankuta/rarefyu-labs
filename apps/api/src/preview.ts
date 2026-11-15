@@ -5,12 +5,12 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * Preview tabs proxy to the session app's listening port through the API,
  * never exposing the session network directly. Token: base64url(payload).sig
  * where payload = `${sessionId}:${port}:${exp}` and sig = HMAC-SHA256(secret).
- * Short TTL (default 60s); expired links get a friendly retry message.
+ * Bounded TTL (30 min); the shell re-signs before expiry. Expired links get a friendly retry message.
  */
 
 const SECRET =
   process.env.PREVIEW_SECRET ?? "dev-only-insecure-preview-secret";
-export const PREVIEW_TTL_SEC = 60;
+export const PREVIEW_TTL_SEC = 30 * 60; // iframe subrequests (assets, hot reload) reuse the token
 
 function b64url(data: string): string {
   return Buffer.from(data).toString("base64url");

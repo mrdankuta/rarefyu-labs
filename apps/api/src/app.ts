@@ -19,7 +19,7 @@ import {
 import { driver } from "./drivers";
 import { reconcile } from "./reconcile";
 import { lookupSnapshot, retireWorkspace, runLifecycle } from "./lifecycle";
-import { signPreview } from "./preview";
+import { PREVIEW_TTL_SEC, signPreview } from "./preview";
 import { resolvePreviewTarget } from "./preview-proxy";
 import { loadTrack } from "./tracks";
 import { getAttempts, getProgress, runCheck, runSolve } from "./checks";
@@ -328,7 +328,7 @@ app.get("/api/playgrounds/:id/preview", async (c) => {
   }
   if (!ready) return c.json({ ready: false, port, hint: `waiting for :${port} — start your app, this pane goes live` });
   const token = signPreview(rec.id, port);
-  return c.json({ ready: true, port, url: `/preview/${token}/`, expiresInSec: 60 });
+  return c.json({ ready: true, port, url: `/preview/${token}/`, expiresInSec: PREVIEW_TTL_SEC });
 });
 
 // Proxied app bytes. Token in path so iframes need no headers. (WebSocket upgrades: see server.ts.)

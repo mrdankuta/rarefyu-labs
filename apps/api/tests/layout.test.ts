@@ -16,13 +16,13 @@ const put = (id: string, body: unknown) =>
 const tab = (id: string, title = id) => ({ id, type: "terminal", title, params: {} });
 
 describe("tab layout", () => {
-  test("new workspace starts with one terminal tab", async () => {
+  test("new workspace starts with a terminal and a preview browser tab", async () => {
     const id = await newPg();
     const r = await app.request(`/api/playgrounds/${id}/layout`);
     expect(r.status).toBe(200);
     const l = await r.json();
-    expect(l.tabs).toHaveLength(1);
-    expect(l.tabs[0].type).toBe("terminal");
+    expect(l.tabs.map((t: { type: string }) => t.type)).toEqual(["terminal", "browser"]);
+    expect(l.tabs[1].params.port).toBe(3000);
     expect(l.activeId).toBe(l.tabs[0].id);
     await driver.destroy(id);
   });

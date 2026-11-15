@@ -372,7 +372,7 @@
         const l = await r.json();
         tabs = l.tabs;
         const terms = (l.tabs as Tab[]).filter((t) => t.type === "terminal");
-        runTab = l.activeId ?? terms[0]?.id ?? "Preview";
+        runTab = l.activeId ?? (l.tabs as Tab[]).find((t) => t.type !== "editor")?.id ?? "Agent";
         restoreEditorId = l.activeEditorId ?? null;
       }
     } catch { /* keep default layout */ }
@@ -397,14 +397,16 @@
   }
   function addTab(type: Tab["type"]) {
     chooser = null;
-    if (type !== "terminal") return;
+    if (type === "editor") { newFileName = ""; return; } // editors open files: start by naming one
     if (tabs.length >= 30) { showToast("tab limit reached — close some tabs first"); return; }
+    const label = type === "browser" ? "Browser" : "Term";
     let n = 1;
-    while (tabs.some((t) => t.title === `Term ${n}`)) n++;
-    const tab: Tab = { id: `term-${Date.now().toString(36)}`, type, title: `Term ${n}`, params: {} };
+    while (tabs.some((t) => t.title === `${label} ${n}`)) n++;
+    const tab: Tab = { id: `${type === "browser" ? "br" : "term"}-${Date.now().toString(36)}`, type, title: `${label} ${n}`, params: type === "browser" ? { port: 3000, path: "/" } : {} };
     tabs = [...tabs, tab];
     showRunTab(tab.id);
-    setTimeout(() => attachTerm(tab.id), 0);
+    if (type === "terminal") setTimeout(() => attachTerm(tab.id), 0);
+    else checkBrowser(tab.id, true);
   }
   function closeTab(tabId: string) {
     const idx = tabs.findIndex((t) => t.id === tabId);
@@ -416,7 +418,7 @@
     tabMenu = null; confirmCloseTab = false;
     if (runTab === tabId) {
       const next = tabs[Math.min(idx, tabs.length - 1)];
-      runTab = next ? next.id : "Preview";
+      runTab = next ? next.id : "Agent";
       if (next) setTimeout(() => attachTerm(next.id), 0);
     }
     persistLayout();
@@ -458,7 +460,11 @@
   let curStep = $state(0);
   let checkHint = $state("");
   let checkOk = $state<boolean | null>(null);
-  let previewState = $state<{ ready: boolean; url?: string; hint?: string }>({ ready: false });
+  // Browser tabs: one live/waiting state per tab (spec #30). The iframe URL is signed once and kept
+  // stable (re-signing would reload the page); it is refreshed on reload, port change, or before expiry.
+  interface BState { ready: boolean; url?: string; hint?: string; signedAt?: number }
+  let bstate = $state<Record<string, BState>>({});
+  const PREVIEW_REFRESH_MS = 25 * 60_000; // tokens live 30 min
   async function loadTrack() {
     try {
       const r = await fetch(`${API}/api/tracks/${TRACK}`);
@@ -548,14 +554,37 @@
     }
     return html;
   }
-  async function pollPreview() {
-    if (runTab !== "Preview") return;
+  const runTabs = $derived(tabs.filter((t) => t.type !== "editor"));
+  const browserTabs = $derived(tabs.filter((t) => t.type === "browser"));
+  async function checkBrowser(tabId: string, force = false) {
+    const tab = tabs.find((t) => t.id === tabId);
+    if (!tab || tab.type !== "browser") return;
+    const port = Number(tab.params.port) || 3000;
+    const cur = bstate[tabId];
+    const stale = !cur?.signedAt || Date.now() - cur.signedAt > PREVIEW_REFRESH_MS;
     try {
-      const r = await fetch(`${API}/api/playgrounds/${id}/preview?port=3000`);
-      if (r.ok) previewState = await r.json();
+      const r = await fetch(`${API}/api/playgrounds/${id}/preview?port=${port}`);
+      if (!r.ok) { bstate[tabId] = { ready: false, hint: `cannot reach :${port} (${r.status})` }; return; }
+      const b = await r.json();
+      if (!b.ready) { bstate[tabId] = { ready: false, hint: b.hint }; return; }
+      // Already live and fresh: keep the existing URL so the page isn't reloaded under the learner.
+      if (cur?.ready && !force && !stale) return;
+      bstate[tabId] = { ready: true, url: b.url, signedAt: Date.now() };
     } catch { /* retry next tick */ }
   }
-  setInterval(pollPreview, 5000);
+  function setBrowserPort(tab: Tab, v: string) {
+    const n = Math.round(Number(v));
+    if (!Number.isInteger(n) || n < 1 || n > 65535) return;
+    tab.params.port = n;
+    bstate[tab.id] = { ready: false, hint: `waiting for :${n} — start your app, this pane goes live` };
+    persistLayout();
+    checkBrowser(tab.id, true);
+  }
+  function setBrowserPath(tab: Tab, v: string) {
+    tab.params.path = v.startsWith("/") ? v : `/${v}`;
+    persistLayout();
+  }
+  setInterval(() => { const t = tabs.find((x) => x.id === runTab); if (t?.type === "browser") checkBrowser(t.id); }, 3000);
 
   // --- learner notices (issue #8): reset/extend/announce toasts ---
   let toast = $state("");
@@ -670,7 +699,7 @@
     <div class="r">
       <span class="dot" style:background={pg?.status === "active" ? "#22c55e" : "#f59e0b"}></span>
       <span class="timer" class:urgent={ttlUrgent} title={ttlUrgent ? "less than 15 minutes left — save your work" : "time remaining"}>{ttlText}</span>
-      <button class="ibtn" onclick={() => showRunTab("Preview")}>⛁ snapshot</button>
+      <a class="ibtn" href="{API}/api/playgrounds/{id}/snapshot.tar" download title="download a tarball of your workspace">⛁ snapshot</a>
       {#if confirmStop}
         <span class="confirm-inline">stop this playground? <button class="ibtn danger" onclick={() => fetch(`${API}/api/playgrounds/${id}`, { method: "DELETE" }).then(() => location.assign("/"))}>yes, stop</button> <button class="ibtn" onclick={() => (confirmStop = false)}>keep</button></span>
       {:else}
@@ -681,7 +710,7 @@
   </header>
   <div class="tabs">
     <div class="grp L"><span class="lbl">Learn</span><span class="tab static">Instructions</span><span class="tab static">IDE</span></div>
-    <div class="grp R"><span class="lbl">Run</span>{#each termTabs as t (t.id)}<span class="tabwrap" role="presentation" draggable="true" ondragstart={() => (dragId = t.id)} ondragover={(e) => e.preventDefault()} ondrop={() => dropOn(t.id)}>{#if renaming === t.id}<input class="tabedit" aria-label="rename tab" bind:value={renameVal} use:focusEl onblur={commitRename} onkeydown={(e) => { if (e.key === "Enter") commitRename(); else if (e.key === "Escape") renaming = null; }} />{:else}<button class="tab" class:active={runTab === t.id} data-tab={t.id} ondblclick={() => startRename(t)} onclick={() => { showRunTab(t.id); setTimeout(() => attachTerm(t.id), 0); }}>{t.title}</button>{/if}{#if runTab === t.id && renaming !== t.id}<button class="tabmenu" aria-label="tab menu" onclick={(e) => openTabMenu(e, t.id)}>⋯</button>{/if}</span>{/each}<button class="tab" class:active={runTab === "Preview"} onclick={() => showRunTab("Preview")}>Preview</button><button class="tab" class:active={runTab === "Agent"} onclick={() => showRunTab("Agent")}>Agent</button><button class="add" aria-label="new tab" onclick={openChooser}>+</button></div>
+    <div class="grp R"><span class="lbl">Run</span>{#each runTabs as t (t.id)}<span class="tabwrap" role="presentation" draggable="true" ondragstart={() => (dragId = t.id)} ondragover={(e) => e.preventDefault()} ondrop={() => dropOn(t.id)}>{#if renaming === t.id}<input class="tabedit" aria-label="rename tab" bind:value={renameVal} use:focusEl onblur={commitRename} onkeydown={(e) => { if (e.key === "Enter") commitRename(); else if (e.key === "Escape") renaming = null; }} />{:else}<button class="tab" class:active={runTab === t.id} data-tab={t.id} ondblclick={() => startRename(t)} onclick={() => { showRunTab(t.id); if (t.type === "terminal") setTimeout(() => attachTerm(t.id), 0); else checkBrowser(t.id); }}>{t.type === "browser" ? "◫ " : ""}{t.title}</button>{/if}{#if runTab === t.id && renaming !== t.id}<button class="tabmenu" aria-label="tab menu" onclick={(e) => openTabMenu(e, t.id)}>⋯</button>{/if}</span>{/each}<button class="tab" class:active={runTab === "Agent"} onclick={() => showRunTab("Agent")}>Agent</button><button class="add" aria-label="new tab" onclick={openChooser}>+</button></div>
   </div>
   <div class="dock" class:noL={hideLearn} class:noR={hideRun}>
     <section class="steps">
@@ -754,13 +783,20 @@
       {#each termTabs as t (t.id)}
         <div class="rpane term" class:on={runTab === t.id}><div class="termbar"><span class="tstate {termState[t.id] ?? 'connecting'}">● {termState[t.id] ?? "connecting"}</span><button class:alert={termState[t.id] === "disconnected"} onclick={() => reconnectTerm(t.id)} title="reconnect shell">⟳ reconnect</button></div><div class="termwrap" bind:this={termEls[t.id]}></div></div>
       {/each}
-      <div class="rpane" class:on={runTab === "Preview"}>
-        {#if previewState.ready}
-          <iframe title="app preview" src={previewState.url} style="flex:1;border:0;background:#fff" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
-        {:else}
-          <div class="prev">◷ {previewState.hint ?? "waiting for :3000 — start your app, this pane goes live"}<br /><span style="font-size:12px">signed URL · 60s TTL · auto-retries every 5s</span></div>
-        {/if}
-      </div>
+      {#each browserTabs as t (t.id)}
+        <div class="rpane" class:on={runTab === t.id}>
+          <div class="urlbar">
+            <button aria-label="reload preview" title="reload" onclick={() => checkBrowser(t.id, true)}>⟳</button>
+            <span class="host">localhost:</span><input class="port" aria-label="preview port" inputmode="numeric" value={String(t.params.port ?? 3000)} onchange={(e) => setBrowserPort(t, e.currentTarget.value)} />
+            <input class="path" aria-label="preview path" value={String(t.params.path ?? "/")} onchange={(e) => setBrowserPath(t, e.currentTarget.value)} />
+          </div>
+          {#if bstate[t.id]?.ready}
+            <iframe title="{t.title} preview" src={`${bstate[t.id].url}${String(t.params.path ?? "/").replace(/^\//, "")}`} style="flex:1;border:0;background:#fff" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+          {:else}
+            <div class="prev">◷ {bstate[t.id]?.hint ?? `waiting for :${t.params.port ?? 3000} — start your app, this pane goes live`}<br /><span style="font-size:12px">checks every 3s</span></div>
+          {/if}
+        </div>
+      {/each}
       <div class="rpane" class:on={runTab === "Agent"}>
         <div class="agent"><b>Lab agent</b>
           <div class="apolicy">file ✓ allowed · shell ⚠ approval · network/creds ⛔ forbidden</div>
@@ -794,8 +830,8 @@
 {#if chooser}
   <div class="menu" role="menu" aria-label="new tab type" style:left="{chooser.x}px" style:top="{chooser.y}px">
     <button role="menuitem" onclick={() => addTab("terminal")}>▣ Terminal</button>
-    <button role="menuitem" disabled title="arrives in a later slice">◫ Browser <i>soon</i></button>
-    <button role="menuitem" disabled title="arrives in a later slice">✎ Editor <i>soon</i></button>
+    <button role="menuitem" onclick={() => addTab("browser")}>◫ Browser</button>
+    <button role="menuitem" onclick={() => addTab("editor")}>✎ Editor (new file)</button>
   </div>
 {/if}
 {#if tabMenu}
@@ -921,6 +957,10 @@
   .termbar button.alert{border-color:#ef4444;color:#fca5a5}
   .termwrap{flex:1;min-height:0;padding:8px}
   .termwrap :global(.xterm){height:100%}
+  .urlbar{display:flex;align-items:center;gap:6px;padding:6px 10px;background:#111;border-bottom:1px solid #222;flex:none;font-family:var(--mono);font-size:12px;color:#94a3b8}
+  .urlbar button{background:none;border:1px solid #333;color:#ccc;border-radius:6px;cursor:pointer;padding:1px 8px}
+  .urlbar input{background:#0b0b0b;border:1px solid #2a2a2a;color:#e6e6e6;border-radius:6px;font-family:var(--mono);font-size:12px;padding:3px 6px}
+  .urlbar .port{width:64px}.urlbar .path{flex:1;min-width:0}
   .prev{margin:12px;border:1px dashed #475569;border-radius:8px;min-height:200px;display:grid;place-items:center;color:#94a3b8;text-align:center;padding:16px}
   .agent{padding:14px;font-size:13px;overflow:auto}
   .apolicy{background:#1e293b;border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12.5px}

@@ -103,7 +103,10 @@ export const LayoutSchema = z
 export type Layout = z.infer<typeof LayoutSchema>;
 
 export const DEFAULT_LAYOUT: Layout = {
-  tabs: [{ id: "term-1", type: "terminal", title: "Term 1", params: {} }],
+  tabs: [
+    { id: "term-1", type: "terminal", title: "Term 1", params: {} },
+    { id: "br-1", type: "browser", title: "Preview", params: { port: 3000, path: "/" } },
+  ],
   activeId: "term-1",
   activeEditorId: null,
 };
