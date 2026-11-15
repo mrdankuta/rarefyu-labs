@@ -336,6 +336,27 @@ export class DockerDriver implements ExecDriver {
     return { bytes: new TextEncoder().encode(content).length };
   }
 
+  async deletePath(sessionId: string, path: string): Promise<void> {
+    const full = this.resolve(path);
+    if (full === WORKSPACE) throw new Error("cannot delete the workspace root");
+    await this.ensureRunning(sessionId);
+    if ((await this.exec(sessionId, ["test", "-e", full])).exitCode !== 0) throw new Error("file not found");
+    const r = await this.exec(sessionId, ["rm", "-rf", "--", full]);
+    if (r.exitCode !== 0) throw new Error(r.stderr.trim() || "delete failed");
+  }
+
+  async renamePath(sessionId: string, from: string, to: string): Promise<void> {
+    const src = this.resolve(from);
+    const dst = this.resolve(to);
+    if (src === WORKSPACE || dst === WORKSPACE) throw new Error("cannot move the workspace root");
+    await this.ensureRunning(sessionId);
+    if ((await this.exec(sessionId, ["test", "-e", src])).exitCode !== 0) throw new Error("file not found");
+    if ((await this.exec(sessionId, ["test", "-e", dst])).exitCode === 0) throw new Error("target already exists");
+    if (dst.startsWith(`${src}/`)) throw new Error("cannot move a folder into itself");
+    const r = await this.exec(sessionId, ["sh", "-c", 'mkdir -p "$(dirname "$2")" && mv -- "$1" "$2"', "_", src, dst]);
+    if (r.exitCode !== 0) throw new Error(r.stderr.trim() || "rename failed");
+  }
+
   async diffFile(sessionId: string, path: string): Promise<string> {
     await this.ensureRunning(sessionId);
     const cur = this.resolve(path);

@@ -43,7 +43,7 @@ describe("tab layout", () => {
     expect((await put(id, { tabs: [tab("a"), tab("a")], activeId: "a" })).status).toBe(400);
     expect((await put(id, { tabs: [tab("../x")], activeId: null })).status).toBe(400);
     expect((await put(id, { tabs: [tab("a", "  ")], activeId: null })).status).toBe(400);
-    const many = Array.from({ length: 13 }, (_, i) => tab(`t${i}`));
+    const many = Array.from({ length: 31 }, (_, i) => tab(`t${i}`));
     expect((await put(id, { tabs: many, activeId: null })).status).toBe(400);
     await driver.destroy(id);
   });

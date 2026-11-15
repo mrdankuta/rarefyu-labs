@@ -5,6 +5,7 @@
   import { EditorState } from "@codemirror/state";
   import { EditorView, keymap } from "@codemirror/view";
   import { javascript } from "@codemirror/lang-javascript";
+  import { python } from "@codemirror/lang-python";
   import { oneDark } from "@codemirror/theme-one-dark";
   // xterm is client-only (CommonJS, needs DOM): dynamic-import inside onMount.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -69,41 +70,145 @@
   interface Entry { path: string; type: "file" | "dir"; size?: number }
   let files = $state<Entry[]>([]);
   let cwd = $state("");
-  let openPath = $state<string | null>(null);
-  let dirty = $state(false);
+  // Editor tabs (spec #30): each open file is a tab; one CodeMirror view swaps per-tab EditorState.
+  const edTabs = $derived(tabs.filter((t) => t.type === "editor"));
+  let activeEd = $state<string | null>(null);
+  let dirtyIds = $state<Set<string>>(new Set());
+  const activeTab = $derived(edTabs.find((t) => t.id === activeEd) ?? null);
+  const openPath = $derived((activeTab?.params.path as string | undefined) ?? null);
+  const dirty = $derived(activeEd ? dirtyIds.has(activeEd) : false);
   let diffText = $state<string | null>(null);
   let showDiff = $state(false);
   let fileNotice = $state("");
   let editorEl: HTMLDivElement | null = null;
   let view: EditorView | null = null;
+  const edStates = new Map<string, EditorState>();
+  const savedContent = new Map<string, string>(); // last content known on the server, per tab
+  let suppressDirty = false;
+
+  function langFor(path: string) {
+    return path.endsWith(".py") ? python() : javascript({ typescript: /\.(ts|tsx)$/.test(path), jsx: /\.(jsx|tsx|svelte)$/.test(path) });
+  }
+  function mkState(doc: string, path: string) {
+    return EditorState.create({
+      doc,
+      extensions: [
+        keymap.of([{ key: "Mod-s", run: () => { saveFile(); return true; } }]),
+        langFor(path),
+        oneDark,
+        EditorView.updateListener.of((u) => {
+          if (u.docChanged && !suppressDirty && activeEd) dirtyIds = new Set([...dirtyIds, activeEd]);
+        }),
+      ],
+    });
+  }
+  function setDirty(tabId: string, v: boolean) {
+    const n = new Set(dirtyIds);
+    if (v) n.add(tabId); else n.delete(tabId);
+    dirtyIds = n;
+  }
+  const PLACEHOLDER = "// open a file from the explorer →\n";
+  function showState(st: EditorState) {
+    suppressDirty = true;
+    view?.setState(st);
+    suppressDirty = false;
+  }
+  async function fetchFile(path: string): Promise<{ content: string; truncated: boolean } | null> {
+    const r = await fetch(`${API}/api/playgrounds/${id}/files/content?path=${encodeURIComponent(path)}`);
+    return r.ok ? await r.json() : null;
+  }
 
   async function listFiles() {
     const r = await fetch(`${API}/api/playgrounds/${id}/files?path=${encodeURIComponent(cwd)}`);
     if (r.ok) files = (await r.json()).files;
   }
-  let pendingPath = $state<string | null>(null);
-  async function openFile(path: string) {
-    if (dirty && openPath !== path) { pendingPath = path; return; }
-    const r = await fetch(`${API}/api/playgrounds/${id}/files/content?path=${encodeURIComponent(path)}`);
-    if (!r.ok) { fileNotice = `cannot open ${path}`; return; }
-    const body = await r.json();
-    openPath = path;
+  async function activateEditor(tabId: string | null) {
+    if (view && activeEd) edStates.set(activeEd, view.state);
+    activeEd = tabId;
     showDiff = false;
-    fileNotice = body.truncated ? "large file — showing first 256KB" : "";
-    view?.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: body.content } });
-    // the dispatch above fires the updateListener synchronously; clear afterwards
-    dirty = false;
+    fileNotice = "";
+    if (!tabId) { showState(EditorState.create({ doc: PLACEHOLDER, extensions: [oneDark] })); persistLayout(); return; }
+    const tab = tabs.find((t) => t.id === tabId);
+    let st = edStates.get(tabId);
+    if (!st && tab) {
+      const path = tab.params.path as string;
+      const body = await fetchFile(path);
+      if (!body) { fileNotice = `cannot open ${path}`; closeEditor(tabId, true); return; }
+      st = mkState(body.content, path);
+      edStates.set(tabId, st);
+      savedContent.set(tabId, body.content);
+      if (body.truncated) fileNotice = "large file — showing first 256KB";
+    }
+    if (st) showState(st);
+    persistLayout();
   }
-  async function saveFile() {
-    if (!openPath || !view) return;
-    const content = view.state.doc.toString();
+  async function openFile(path: string) {
+    const existing = edTabs.find((t) => t.params.path === path);
+    if (existing) { await activateEditor(existing.id); return; }
+    const body = await fetchFile(path);
+    if (!body) { fileNotice = `cannot open ${path}`; return; }
+    if (tabs.length >= 30) { showToast("tab limit reached — close some tabs first"); return; }
+    const tab: Tab = { id: `ed-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, type: "editor", title: path.split("/").pop() ?? path, params: { path } };
+    tabs = [...tabs, tab];
+    edStates.set(tab.id, mkState(body.content, path));
+    savedContent.set(tab.id, body.content);
+    await activateEditor(tab.id);
+    if (body.truncated) fileNotice = "large file — showing first 256KB";
+  }
+  let pendingClose = $state<string | null>(null);
+  function closeEditor(tabId: string, force = false) {
+    if (!force && dirtyIds.has(tabId)) { pendingClose = tabId; return; }
+    const idx = edTabs.findIndex((t) => t.id === tabId);
+    const wasActive = activeEd === tabId;
+    edStates.delete(tabId); savedContent.delete(tabId); setDirty(tabId, false);
+    tabs = tabs.filter((t) => t.id !== tabId);
+    if (wasActive) {
+      const next = edTabs[Math.min(idx, edTabs.length - 1)];
+      activeEd = null; // state of the closed tab must not be stashed
+      void activateEditor(next?.id ?? null);
+    } else persistLayout();
+  }
+  async function saveFile(tabId: string | null = activeEd) {
+    if (!tabId || !view) return;
+    const tab = tabs.find((t) => t.id === tabId);
+    if (!tab) return;
+    const st = tabId === activeEd ? view.state : edStates.get(tabId);
+    if (!st) return;
+    const content = st.doc.toString();
     const r = await fetch(`${API}/api/playgrounds/${id}/files/content`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ path: openPath, content }),
+      body: JSON.stringify({ path: tab.params.path, content }),
     });
     fileNotice = r.ok ? "saved ✓" : `save failed: ${(await r.json()).error}`;
-    if (r.ok) { dirty = false; listFiles(); }
+    if (r.ok) { savedContent.set(tabId, content); setDirty(tabId, false); listFiles(); }
+  }
+  /** Pull in changes made outside the editor (terminal, agent) for clean tabs. */
+  async function syncActiveEditor() {
+    if (!activeEd || !view || dirtyIds.has(activeEd) || !openPath) return;
+    const tabId = activeEd;
+    const body = await fetchFile(openPath);
+    if (!body || tabId !== activeEd || dirtyIds.has(tabId)) return;
+    if (body.content !== savedContent.get(tabId) && body.content !== view.state.doc.toString()) {
+      suppressDirty = true;
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: body.content } });
+      suppressDirty = false;
+      fileNotice = "updated from disk";
+    }
+    savedContent.set(tabId, body.content);
+  }
+  async function reloadEditors() {
+    // After a project reset / solution: re-read every open file; drop tabs whose file is gone.
+    const current = activeEd;
+    for (const t of [...edTabs]) {
+      const body = await fetchFile(t.params.path as string);
+      if (!body) { closeEditor(t.id, true); continue; }
+      edStates.set(t.id, mkState(body.content, t.params.path as string));
+      savedContent.set(t.id, body.content);
+      setDirty(t.id, false);
+    }
+    activeEd = null;
+    await activateEditor(edTabs.find((t) => t.id === current)?.id ?? edTabs[0]?.id ?? null);
   }
   async function loadDiff() {
     if (!openPath) return;
@@ -112,6 +217,54 @@
     const body = await r.json();
     diffText = body.changed ? body.diff : "(identical to starter)";
     showDiff = true;
+  }
+  // --- explorer: new / rename / delete ---
+  let newFileName = $state<string | null>(null);
+  let renamingPath = $state<string | null>(null);
+  let renameTo = $state("");
+  let deletingPath = $state<string | null>(null);
+  async function createFile() {
+    const name = (newFileName ?? "").trim().replace(/^\/+/, "");
+    newFileName = null;
+    if (!name) return;
+    const path = cwd ? `${cwd}/${name}` : name;
+    const r = await fetch(`${API}/api/playgrounds/${id}/files/content`, {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, content: "" }),
+    });
+    if (!r.ok) { fileNotice = `cannot create: ${(await r.json()).error}`; return; }
+    await listFiles();
+    await openFile(path);
+  }
+  async function renameEntry() {
+    const from = renamingPath; const to = renameTo.trim().replace(/^\/+/, "");
+    renamingPath = null;
+    if (!from || !to || to === from) return;
+    const r = await fetch(`${API}/api/playgrounds/${id}/files/rename`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ from, to }),
+    });
+    if (!r.ok) { fileNotice = `rename failed: ${(await r.json()).error}`; return; }
+    for (const t of tabs) {
+      const p = t.params.path as string | undefined;
+      if (t.type !== "editor" || !p) continue;
+      if (p === from || p.startsWith(`${from}/`)) {
+        const np = to + p.slice(from.length);
+        t.params.path = np; t.title = np.split("/").pop() ?? np;
+      }
+    }
+    persistLayout();
+    listFiles();
+  }
+  async function deleteEntry() {
+    const path = deletingPath;
+    deletingPath = null;
+    if (!path) return;
+    const r = await fetch(`${API}/api/playgrounds/${id}/files?path=${encodeURIComponent(path)}`, { method: "DELETE" });
+    if (!r.ok) { fileNotice = `delete failed: ${(await r.json()).error}`; return; }
+    for (const t of [...edTabs]) {
+      const p = t.params.path as string;
+      if (p === path || p.startsWith(`${path}/`)) closeEditor(t.id, true);
+    }
+    listFiles();
   }
   let confirmResetFile = $state(false);
   let confirmResetProject = $state(false);
@@ -124,7 +277,7 @@
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ path: openPath }),
     });
-    if (r.ok) { openFile(openPath); fileNotice = "file reset to starter ✓"; }
+    if (r.ok) { await reloadEditors(); fileNotice = "file reset to starter ✓"; }
     else fileNotice = `reset failed: ${(await r.json()).error}`;
   }
   async function resetProject() {
@@ -135,7 +288,7 @@
       headers: { "content-type": "application/json" },
       body: JSON.stringify({}),
     });
-    if (r.ok) { openPath = null; showDiff = false; listFiles(); fileNotice = "project reset ✓"; }
+    if (r.ok) { showDiff = false; listFiles(); await reloadEditors(); fileNotice = "project reset ✓"; }
   }
 
   // --- terminals (one xterm per term tab, shared session) ---
@@ -200,6 +353,7 @@
   // --- tab layout: persisted server-side, restored after refresh ---
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let layoutLoaded = false;
+  let restoreEditorId: string | null = null;
   function persistLayout() {
     if (!layoutLoaded) return;
     if (saveTimer) clearTimeout(saveTimer);
@@ -207,7 +361,7 @@
       fetch(`${API}/api/playgrounds/${id}/layout`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ tabs: $state.snapshot(tabs), activeId: runTab }),
+        body: JSON.stringify({ tabs: $state.snapshot(tabs), activeId: runTab, activeEditorId: activeEd }),
       }).catch(() => {});
     }, 250);
   }
@@ -217,7 +371,9 @@
       if (r.ok) {
         const l = await r.json();
         tabs = l.tabs;
-        runTab = l.activeId ?? l.tabs[0]?.id ?? "Preview";
+        const terms = (l.tabs as Tab[]).filter((t) => t.type === "terminal");
+        runTab = l.activeId ?? terms[0]?.id ?? "Preview";
+        restoreEditorId = l.activeEditorId ?? null;
       }
     } catch { /* keep default layout */ }
     layoutLoaded = true;
@@ -242,7 +398,7 @@
   function addTab(type: Tab["type"]) {
     chooser = null;
     if (type !== "terminal") return;
-    if (tabs.length >= 12) { showToast("tab limit reached (12) — close one first"); return; }
+    if (tabs.length >= 30) { showToast("tab limit reached — close some tabs first"); return; }
     let n = 1;
     while (tabs.some((t) => t.title === `Term ${n}`)) n++;
     const tab: Tab = { id: `term-${Date.now().toString(36)}`, type, title: `Term ${n}`, params: {} };
@@ -371,7 +527,7 @@
     });
     const body = await r.json();
     checkHint = r.ok ? "solution applied — review the files, then Check" : body.error;
-    if (r.ok) { openPath = null; listFiles(); }
+    if (r.ok) { listFiles(); reloadEditors(); }
   }
   // Minimal assignment renderer: fenced blocks, # headings, `code`, **bold**.
   function esc(s: string) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
@@ -470,7 +626,7 @@
       const body = await r.json();
       for (const n of body.notices) {
         showToast(n.message);
-        if (n.kind === "reset") { openPath = null; listFiles(); }
+        if (n.kind === "reset") { listFiles(); reloadEditors(); }
       }
     } catch { /* retry next tick */ }
   }
@@ -488,24 +644,20 @@
     return "◦";
   }
   onMount(() => {
-    loadSession().then(async () => { listFiles(); loadTrack(); await loadLayout(); if (termTabs.some((t) => t.id === runTab)) setTimeout(() => attachTerm(runTab), 0); });
+    loadSession().then(async () => { listFiles(); loadTrack(); await loadLayout(); if (termTabs.some((t) => t.id === runTab)) setTimeout(() => attachTerm(runTab), 0); const first = edTabs.find((t) => t.id === restoreEditorId) ?? edTabs[0]; if (first) await activateEditor(first.id); });
     if (typeof window !== "undefined") window.addEventListener("resize", refitTerms);
     view = new EditorView({
-      state: EditorState.create({
-        doc: "// open a file from the explorer →\n",
-        extensions: [
-          keymap.of([{ key: "Mod-s", run: () => { saveFile(); return true; } }]),
-          javascript(),
-          oneDark,
-          EditorView.updateListener.of((u) => { if (u.docChanged) dirty = true; }),
-        ],
-      }),
+      state: EditorState.create({ doc: PLACEHOLDER, extensions: [oneDark] }),
       parent: editorEl!,
     });
+    const poll = setInterval(() => { syncActiveEditor(); listFiles(); }, 3000);
+    pollTimer = poll;
     heartbeat();
     return () => {};
   });
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
   onDestroy(() => {
+    if (pollTimer) clearInterval(pollTimer);
     if (typeof window !== "undefined") window.removeEventListener("resize", refitTerms);
     view?.destroy();
     for (const t of Object.values(termObjs)) { try { t.ws.close(); } catch {} t.term.dispose(); }
@@ -569,10 +721,19 @@
     <section class="ide">
       <div class="actbar"><button class="act active">🗀</button></div>
       <div class="side">
-        <div class="fh">Explorer</div>
+        <div class="fh">Explorer <button class="xbtn" aria-label="new file" title="new file" onclick={() => (newFileName = "")}>＋</button></div>
+        {#if newFileName !== null}
+          <input class="xin" aria-label="new file name" placeholder="name.ext" bind:value={newFileName} use:focusEl onkeydown={(e) => { if (e.key === "Enter") createFile(); else if (e.key === "Escape") newFileName = null; }} onblur={() => (newFileName = null)} />
+        {/if}
         {#if cwd}<div class="crumb" onclick={() => (cwd = "", listFiles())}>‹ {cwd || "root"}</div>{/if}
-        {#each files as f}
-          <div class="file" class:sel={openPath === f.path} title={f.path} onclick={() => f.type === "dir" ? (cwd = f.path, listFiles()) : openFile(f.path)}><span class="fic">{fileIcon(f.path.split("/").pop() ?? "", f.type)}</span>{f.path.split("/").pop()}</div>
+        {#each files as f (f.path)}
+          {#if renamingPath === f.path}
+            <input class="xin" aria-label="rename" bind:value={renameTo} use:focusEl onkeydown={(e) => { if (e.key === "Enter") renameEntry(); else if (e.key === "Escape") renamingPath = null; }} onblur={() => (renamingPath = null)} />
+          {:else if deletingPath === f.path}
+            <div class="file warn">delete {f.path.split("/").pop()}? <a href="#" onmousedown={(e) => (e.preventDefault(), deleteEntry())}>yes</a> · <a href="#" onmousedown={(e) => (e.preventDefault(), deletingPath = null)}>no</a></div>
+          {:else}
+            <div class="file" class:sel={openPath === f.path} title={f.path} data-path={f.path} onclick={() => f.type === "dir" ? (cwd = f.path, listFiles()) : openFile(f.path)}><span class="fic">{fileIcon(f.path.split("/").pop() ?? "", f.type)}</span><span class="fname">{f.path.split("/").pop()}</span><span class="facts"><button aria-label="rename {f.path}" onclick={(e) => { e.stopPropagation(); renamingPath = f.path; renameTo = f.path; }}>✎</button><button aria-label="delete {f.path}" onclick={(e) => { e.stopPropagation(); deletingPath = f.path; }}>🗑</button></span></div>
+          {/if}
         {/each}
         <div class="fh" style="margin-top:10px">Project</div>
         {#if confirmResetProject}
@@ -582,7 +743,8 @@
         {/if}
       </div>
       <div class="ed">
-        <div class="edtab"><span>{dirty ? "● " : ""}{openPath ?? "no file open"}</span>{#if openPath}<button class="savebtn" onclick={saveFile} disabled={!dirty}>save ⌘S</button><a href="#" onclick={(e) => (e.preventDefault(), loadDiff())}>diff</a>{#if confirmResetFile}<span>reset? <a href="#" onclick={(e) => (e.preventDefault(), resetFile())}>yes</a> · <a href="#" onclick={(e) => (e.preventDefault(), confirmResetFile = false)}>no</a></span>{:else}<a href="#" onclick={(e) => (e.preventDefault(), confirmResetFile = true)}>reset file</a>{/if}{/if}<span style="margin-left:auto;color:#858585">{fileNotice}</span></div>
+        <div class="edtabs" role="tablist">{#each edTabs as t (t.id)}<span class="edt" class:active={activeEd === t.id}><button class="edname" role="tab" data-edtab={t.id} title={t.params.path as string} onclick={() => activateEditor(t.id)}>{dirtyIds.has(t.id) ? "● " : ""}{t.title}</button><button class="edx" aria-label="close {t.title}" onclick={() => closeEditor(t.id)}>×</button></span>{/each}</div>
+        <div class="edtab"><span>{dirty ? "● " : ""}{openPath ?? "no file open"}</span>{#if openPath}<button class="savebtn" onclick={() => saveFile()} disabled={!dirty}>save ⌘S</button><a href="#" onclick={(e) => (e.preventDefault(), loadDiff())}>diff</a>{#if confirmResetFile}<span>reset? <a href="#" onclick={(e) => (e.preventDefault(), resetFile())}>yes</a> · <a href="#" onclick={(e) => (e.preventDefault(), confirmResetFile = false)}>no</a></span>{:else}<a href="#" onclick={(e) => (e.preventDefault(), confirmResetFile = true)}>reset file</a>{/if}{/if}<span style="margin-left:auto;color:#858585">{fileNotice}</span></div>
         {#if showDiff}<pre class="diff">{diffText}</pre>{/if}
         <div class="code" bind:this={editorEl}></div>
       </div>
@@ -617,14 +779,15 @@
     </section>
   </div>
 </div>
-{#if pendingPath}
-  <div class="modal-veil" onclick={() => (pendingPath = null)}></div>
+{#if pendingClose}
+  {@const pt = tabs.find((t) => t.id === pendingClose)}
+  <div class="modal-veil" onclick={() => (pendingClose = null)}></div>
   <div class="modal" role="dialog" aria-label="unsaved changes">
     <b>Unsaved changes</b>
-    <p>{openPath} has unsaved edits. Save first, or discard them?</p>
-    <button class="mini" onclick={() => { saveFile(); pendingPath = null; }}>save</button>
-    <button class="mini ghost" onclick={() => { dirty = false; const p = pendingPath; pendingPath = null; if (p) openFile(p); }}>discard</button>
-    <button class="mini ghost" onclick={() => (pendingPath = null)}>cancel</button>
+    <p>{pt?.title ?? "This file"} has unsaved edits. Save first, or discard them?</p>
+    <button class="mini" onclick={async () => { const t = pendingClose!; pendingClose = null; await saveFile(t); closeEditor(t, true); }}>save</button>
+    <button class="mini ghost" onclick={() => { const t = pendingClose!; pendingClose = null; closeEditor(t, true); }}>discard</button>
+    <button class="mini ghost" onclick={() => (pendingClose = null)}>cancel</button>
   </div>
 {/if}
 {#if chooser || tabMenu}<div class="menu-veil" role="presentation" onclick={() => { chooser = null; tabMenu = null; }}></div>{/if}
@@ -672,6 +835,19 @@
   .crumb{font-family:var(--mono);font-size:12px;color:#93c5fd;cursor:pointer;padding:3px 8px}
   .fic{display:inline-block;width:18px;color:#858585}
   .file.warn{color:#fca5a5}
+  .edtabs{display:flex;overflow-x:auto;background:#181818;border-bottom:1px solid #2a2a2a;flex:none;min-height:0}
+  .edt{display:inline-flex;align-items:center;border-right:1px solid #2a2a2a;background:#222;color:#aaa;flex:none}
+  .edt.active{background:#1f1f1f;color:#fff;box-shadow:inset 0 -2px 0 #2f81f7}
+  .edname{background:none;border:0;color:inherit;font-family:var(--mono);font-size:12.5px;padding:7px 4px 7px 12px;cursor:pointer}
+  .edx{background:none;border:0;color:#858585;font-size:15px;padding:0 8px;cursor:pointer}
+  .edx:hover{color:#fff}
+  .xbtn{background:none;border:1px solid #333;color:#aaa;border-radius:4px;font-size:12px;cursor:pointer;padding:0 5px;float:right}
+  .xin{width:100%;box-sizing:border-box;background:#0f0f0f;color:#fff;border:1px solid #2f81f7;border-radius:4px;font-family:var(--mono);font-size:12px;padding:3px 6px;margin:2px 0}
+  .file{display:flex;align-items:center}
+  .fname{flex:1;overflow:hidden;text-overflow:ellipsis}
+  .facts{display:none;gap:2px}
+  .file:hover .facts{display:inline-flex}
+  .facts button{background:none;border:0;color:#aaa;font-size:11px;cursor:pointer;padding:0 2px}
   .savebtn{background:#2f81f7;color:#fff;border:0;border-radius:6px;font-size:12px;font-weight:700;padding:3px 10px;cursor:pointer}
   .savebtn:disabled{opacity:.4;cursor:default}
   .mini{background:var(--ink);color:#fff;border:0;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer}

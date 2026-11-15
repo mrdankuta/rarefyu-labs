@@ -255,6 +255,32 @@ app.put("/api/playgrounds/:id/files/content", async (c) => {
   }
 });
 
+app.delete("/api/playgrounds/:id/files", async (c) => {
+  if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
+  const path = c.req.query("path") ?? "";
+  try {
+    await driver.deletePath(c.req.param("id"), path);
+    return c.json({ ok: true });
+  } catch (err) {
+    const msg = (err as Error).message;
+    return c.json({ error: msg }, msg.includes("not found") ? 404 : 400);
+  }
+});
+
+app.post("/api/playgrounds/:id/files/rename", async (c) => {
+  if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
+  const body = await c.req.json().catch(() => ({}));
+  if (typeof body.from !== "string" || typeof body.to !== "string" || !body.from || !body.to)
+    return c.json({ error: "need {from, to}" }, 400);
+  try {
+    await driver.renamePath(c.req.param("id"), body.from, body.to);
+    return c.json({ ok: true });
+  } catch (err) {
+    const msg = (err as Error).message;
+    return c.json({ error: msg }, msg.includes("not found") ? 404 : msg.includes("exists") ? 409 : 400);
+  }
+});
+
 app.get("/api/playgrounds/:id/files/diff", async (c) => {
   if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
   const path = c.req.query("path");

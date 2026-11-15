@@ -52,6 +52,10 @@ export interface ExecDriver {
   listFiles(sessionId: string, sub?: string): Promise<{ path: string; type: "file" | "dir"; size?: number }[]>;
   readFile(sessionId: string, path: string): Promise<{ content: string; truncated: boolean }>;
   writeFile(sessionId: string, path: string, content: string): Promise<{ bytes: number }>;
+  /** Delete a file or directory inside the workspace (never the workspace root). */
+  deletePath(sessionId: string, path: string): Promise<void>;
+  /** Move/rename inside the workspace. Fails if the target exists or either path escapes. */
+  renamePath(sessionId: string, from: string, to: string): Promise<void>;
   /** Unified diff of current vs starter snapshot; empty string = identical. */
   diffFile(sessionId: string, path: string): Promise<string>;
   resetFile(sessionId: string, path: string): Promise<void>;

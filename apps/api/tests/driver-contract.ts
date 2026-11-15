@@ -134,6 +134,25 @@ export function driverContract(name: string, make: () => ExecDriver, opts?: { sk
       await expect(d.listFiles(id, "../..")).rejects.toThrow();
     });
 
+    t("files: rename and delete, guarded", async () => {
+      const id = sid("mv");
+      await d.writeFile(id, "a.txt", "A");
+      await d.writeFile(id, "dir/b.txt", "B");
+      await d.renamePath(id, "a.txt", "sub/renamed.txt");
+      expect((await d.readFile(id, "sub/renamed.txt")).content).toBe("A");
+      await expect(d.readFile(id, "a.txt")).rejects.toThrow();
+      await expect(d.renamePath(id, "dir/b.txt", "sub/renamed.txt")).rejects.toThrow(/exists/);
+      await expect(d.renamePath(id, "nope.txt", "x.txt")).rejects.toThrow(/not found/);
+      await expect(d.renamePath(id, "dir", "dir/inner")).rejects.toThrow();
+      await expect(d.renamePath(id, "dir/b.txt", "../out.txt")).rejects.toThrow();
+      await d.deletePath(id, "dir");
+      expect((await d.listFiles(id)).map((f) => f.path)).not.toContain("dir");
+      await expect(d.deletePath(id, "dir")).rejects.toThrow(/not found/);
+      await expect(d.deletePath(id, "")).rejects.toThrow(/root/);
+      await expect(d.deletePath(id, "../x")).rejects.toThrow();
+      await expect(d.deletePath(id, ".")).rejects.toThrow(/root/);
+    });
+
     t("files: diff against starter, reset file and project", async () => {
       const id = sid("reset");
       await d.create(id);

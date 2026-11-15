@@ -77,7 +77,7 @@ export type AgentPolicy = z.infer<typeof AgentPolicySchema>;
 export const TabTypeSchema = z.enum(["terminal", "browser", "editor"]);
 export type TabType = z.infer<typeof TabTypeSchema>;
 
-export const MAX_TABS = 12;
+export const MAX_TABS = 30;
 
 export const TabSchema = z.object({
   /** Stable id; for terminals this is also the shell/terminal id. */
@@ -94,6 +94,8 @@ export const LayoutSchema = z
     tabs: z.array(TabSchema).max(MAX_TABS),
     /** Active tab id, or a built-in pane name (e.g. "Preview", "Agent"). */
     activeId: z.string().max(40).nullable().default(null),
+    /** Active editor tab id (editors live in the IDE column, terminals in the Run group). */
+    activeEditorId: z.string().max(40).nullable().default(null),
   })
   .refine((l) => new Set(l.tabs.map((t) => t.id)).size === l.tabs.length, {
     message: "tab ids must be unique",
@@ -103,4 +105,5 @@ export type Layout = z.infer<typeof LayoutSchema>;
 export const DEFAULT_LAYOUT: Layout = {
   tabs: [{ id: "term-1", type: "terminal", title: "Term 1", params: {} }],
   activeId: "term-1",
+  activeEditorId: null,
 };

@@ -249,6 +249,25 @@ export class LocalDriver implements ExecDriver {
     return { bytes: new TextEncoder().encode(content).length };
   }
 
+  async deletePath(sessionId: string, path: string): Promise<void> {
+    if (!path.replace(/\/+/g, "")) throw new Error("cannot delete the workspace root");
+    const full = this.resolve(sessionId, path);
+    if (full === this.dir(sessionId)) throw new Error("cannot delete the workspace root");
+    const exists = (await Bun.$`test -e ${full}`.quiet().nothrow()).exitCode === 0;
+    if (!exists) throw new Error("file not found");
+    await Bun.$`rm -rf ${full}`.quiet();
+  }
+
+  async renamePath(sessionId: string, from: string, to: string): Promise<void> {
+    const src = this.resolve(sessionId, from);
+    const dst = this.resolve(sessionId, to);
+    if (src === this.dir(sessionId) || dst === this.dir(sessionId)) throw new Error("cannot move the workspace root");
+    if ((await Bun.$`test -e ${src}`.quiet().nothrow()).exitCode !== 0) throw new Error("file not found");
+    if ((await Bun.$`test -e ${dst}`.quiet().nothrow()).exitCode === 0) throw new Error("target already exists");
+    if (dst.startsWith(`${src}/`)) throw new Error("cannot move a folder into itself");
+    await Bun.$`mkdir -p ${dst.slice(0, dst.lastIndexOf("/"))} && mv ${src} ${dst}`.quiet();
+  }
+
   async diffFile(sessionId: string, path: string): Promise<string> {
     await this.ensureStarter(sessionId);
     const cur = this.resolve(sessionId, path);

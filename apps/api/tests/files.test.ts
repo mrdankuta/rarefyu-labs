@@ -83,3 +83,38 @@ describe("session filesystem", () => {
     expect(big.status).toBe(400);
   });
 });
+
+describe("explorer operations", () => {
+  const req = (id: string, path: string, init?: RequestInit) => app.request(`/api/playgrounds/${id}/files${path}`, { headers: H, ...init });
+  const put = (id: string, path: string, content: string) =>
+    app.request(`/api/playgrounds/${id}/files/content`, { method: "PUT", headers: H, body: JSON.stringify({ path, content }) });
+  const mv = (id: string, from: string, to: string) =>
+    req(id, "/rename", { method: "POST", body: JSON.stringify({ from, to }) });
+
+  test("create (empty write), rename, delete round trip", async () => {
+    const id = await makePlayground();
+    expect((await put(id, "notes/todo.md", "")).status).toBe(200);
+    expect((await mv(id, "notes/todo.md", "notes/done.md")).status).toBe(200);
+    const list = await (await req(id, "?path=notes")).json();
+    expect(list.files.map((f: { path: string }) => f.path)).toEqual(["notes/done.md"]);
+    expect((await req(id, "?path=notes/done.md", { method: "DELETE" })).status).toBe(200);
+    expect((await req(id, "?path=notes/done.md", { method: "DELETE" })).status).toBe(404);
+  });
+
+  test("rename refuses to overwrite and refuses escapes", async () => {
+    const id = await makePlayground();
+    await put(id, "a.txt", "A");
+    await put(id, "b.txt", "B");
+    expect((await mv(id, "a.txt", "b.txt")).status).toBe(409);
+    expect((await mv(id, "a.txt", "../outside.txt")).status).toBe(400);
+    expect((await mv(id, "missing.txt", "x.txt")).status).toBe(404);
+    expect((await mv(id, "", "x.txt")).status).toBe(400);
+  });
+
+  test("cannot delete the workspace root or escape it", async () => {
+    const id = await makePlayground();
+    expect((await req(id, "?path=", { method: "DELETE" })).status).toBe(400);
+    expect((await req(id, "?path=.", { method: "DELETE" })).status).toBe(400);
+    expect((await req(id, "?path=../..", { method: "DELETE" })).status).toBe(400);
+  });
+});
