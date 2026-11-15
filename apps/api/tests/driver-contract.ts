@@ -86,6 +86,23 @@ export function driverContract(name: string, make: () => ExecDriver, opts?: { sk
       expect(b.scrollback()).not.toContain("only-in-a");
     });
 
+    t("closeTerminal kills that shell only; reopening gives a fresh shell", async () => {
+      const id = sid("close");
+      const a = await d.openTerminal(id, "a");
+      const b = await d.openTerminal(id, "b");
+      a.write("echo marker-a\n");
+      b.write("echo marker-b\n");
+      expect(await waitFor(() => a.scrollback(), "marker-a")).toBe(true);
+      expect(await waitFor(() => b.scrollback(), "marker-b")).toBe(true);
+      await d.closeTerminal(id, "a");
+      await d.closeTerminal(id, "a"); // idempotent
+      await d.closeTerminal(id, "never-opened"); // never throws
+      const b2 = await d.openTerminal(id, "b");
+      expect(b2.scrollback()).toContain("marker-b");
+      const a2 = await d.openTerminal(id, "a");
+      expect(a2.scrollback()).not.toContain("marker-a");
+    });
+
     t("terminal and run see the same workspace", async () => {
       const id = sid("shared");
       await d.writeFile(id, "from-api.txt", "api-wrote-this");

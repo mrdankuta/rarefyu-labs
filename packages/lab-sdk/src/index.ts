@@ -72,3 +72,35 @@ export const AgentPolicySchema = z.object({
   forbidden: z.array(z.string()),
 });
 export type AgentPolicy = z.infer<typeof AgentPolicySchema>;
+
+/** Workspace shell tabs (spec #30): any number of each type, persisted per workspace. */
+export const TabTypeSchema = z.enum(["terminal", "browser", "editor"]);
+export type TabType = z.infer<typeof TabTypeSchema>;
+
+export const MAX_TABS = 12;
+
+export const TabSchema = z.object({
+  /** Stable id; for terminals this is also the shell/terminal id. */
+  id: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/),
+  type: TabTypeSchema,
+  title: z.string().trim().min(1).max(40),
+  /** Type-specific params (browser: port/url, editor: path, terminal: cwd/cmd). */
+  params: z.record(z.union([z.string().max(500), z.number(), z.boolean()])).default({}),
+});
+export type Tab = z.infer<typeof TabSchema>;
+
+export const LayoutSchema = z
+  .object({
+    tabs: z.array(TabSchema).max(MAX_TABS),
+    /** Active tab id, or a built-in pane name (e.g. "Preview", "Agent"). */
+    activeId: z.string().max(40).nullable().default(null),
+  })
+  .refine((l) => new Set(l.tabs.map((t) => t.id)).size === l.tabs.length, {
+    message: "tab ids must be unique",
+  });
+export type Layout = z.infer<typeof LayoutSchema>;
+
+export const DEFAULT_LAYOUT: Layout = {
+  tabs: [{ id: "term-1", type: "terminal", title: "Term 1", params: {} }],
+  activeId: "term-1",
+};

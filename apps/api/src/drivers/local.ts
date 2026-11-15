@@ -106,6 +106,12 @@ export class LocalDriver implements ExecDriver {
     };
   }
 
+  async closeTerminal(sessionId: string, termId: string): Promise<void> {
+    const key = `${sessionId}/${termId}`;
+    this.shells.get(key)?.kill();
+    this.shells.delete(key);
+  }
+
   async run(sessionId: string, cmd: string, opts?: { timeoutMs?: number }) {
     const dir = this.dir(sessionId);
     await this.create(sessionId);

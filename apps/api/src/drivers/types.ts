@@ -38,6 +38,8 @@ export interface ExecDriver {
   create(sessionId: string): Promise<{ workspaceDir: string }>;
   /** Open (or reattach to) a named terminal in the session. */
   openTerminal(sessionId: string, termId: string): Promise<TerminalHandle>;
+  /** Kill a named terminal's shell if it exists. Idempotent; never creates one. */
+  closeTerminal(sessionId: string, termId: string): Promise<void>;
   /** Run a one-shot command, capture output (check/solve scripts). */
   run(sessionId: string, cmd: string, opts?: { timeoutMs?: number }): Promise<{
     stdout: string;

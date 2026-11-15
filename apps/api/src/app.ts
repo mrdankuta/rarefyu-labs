@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { SessionSchema } from "@rarefyu/lab-sdk";
+import { DEFAULT_LAYOUT, LayoutSchema, SessionSchema } from "@rarefyu/lab-sdk";
 import {
   createPlayground,
   destroyPlayground,
@@ -162,6 +162,29 @@ app.delete("/api/playgrounds/:id", async (c) => {
   if (!ok) return c.json({ error: "playground not found" }, 404);
   await driver.destroy(c.req.param("id"));
   return c.json({ ok: true });
+});
+
+// --- Tab layout (spec #30): persisted per workspace, terminals follow tabs ---
+app.get("/api/playgrounds/:id/layout", (c) => {
+  const rec = getPlayground(c.req.param("id"));
+  if (!rec || rec.status === "destroyed") return c.json({ error: "playground not found" }, 404);
+  return c.json(rec.layout ?? DEFAULT_LAYOUT);
+});
+
+app.put("/api/playgrounds/:id/layout", async (c) => {
+  const rec = getPlayground(c.req.param("id"));
+  if (!rec || rec.status === "destroyed") return c.json({ error: "playground not found" }, 404);
+  const parsed = LayoutSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success)
+    return c.json({ error: parsed.error.issues.map((i) => i.message).join("; ") }, 400);
+  const next = parsed.data;
+  // Closing a terminal tab ends its shell; the layout is the source of truth.
+  const keep = new Set(next.tabs.filter((t) => t.type === "terminal").map((t) => t.id));
+  for (const t of (rec.layout ?? DEFAULT_LAYOUT).tabs) {
+    if (t.type === "terminal" && !keep.has(t.id)) await driver.closeTerminal(rec.id, t.id);
+  }
+  rec.layout = next;
+  return c.json(next);
 });
 
 // Real tarball download (workspace-t). Metadata lives at /snapshot.

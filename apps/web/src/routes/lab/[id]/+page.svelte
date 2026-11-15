@@ -18,8 +18,11 @@
   // --- layout state (persisted per user, post-MVP mechanism = localStorage) ---
   let hideLearn = $state(false);
   let hideRun = $state(false);
-  let runTab = $state("Term 1");
-  let terms = $state(["Term 1"]);
+  // Tab model (spec #30): terminals are data-driven; Preview/Agent are built-in panes for now.
+  interface Tab { id: string; type: "terminal" | "browser" | "editor"; title: string; params: Record<string, string | number | boolean> }
+  let tabs = $state<Tab[]>([{ id: "term-1", type: "terminal", title: "Term 1", params: {} }]);
+  let runTab = $state("term-1");
+  const termTabs = $derived(tabs.filter((t) => t.type === "terminal"));
   if (typeof localStorage !== "undefined") {
     hideLearn = localStorage.getItem("labs.hideLearn") === "1";
     hideRun = localStorage.getItem("labs.hideRun") === "1";
@@ -187,15 +190,104 @@
   }
   function showRunTab(name: string) {
     runTab = name;
+    persistLayout();
     // xterm needs a visible element to measure: refit after paint.
     requestAnimationFrame(() => requestAnimationFrame(refitTerms));
   }
-  function addTerm() {
-    const n = `Term ${terms.length + 1}`;
-    terms = [...terms.slice(0, 1), n, ...terms.slice(1)];
-    showRunTab(n);
-    setTimeout(() => attachTerm(n), 0);
+
+  // --- tab layout: persisted server-side, restored after refresh ---
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  let layoutLoaded = false;
+  function persistLayout() {
+    if (!layoutLoaded) return;
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      fetch(`${API}/api/playgrounds/${id}/layout`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tabs: $state.snapshot(tabs), activeId: runTab }),
+      }).catch(() => {});
+    }, 250);
   }
+  async function loadLayout() {
+    try {
+      const r = await fetch(`${API}/api/playgrounds/${id}/layout`);
+      if (r.ok) {
+        const l = await r.json();
+        tabs = l.tabs;
+        runTab = l.activeId ?? l.tabs[0]?.id ?? "Preview";
+      }
+    } catch { /* keep default layout */ }
+    layoutLoaded = true;
+  }
+  let chooser = $state<{ x: number; y: number } | null>(null);
+  let tabMenu = $state<{ id: string; x: number; y: number } | null>(null);
+  let confirmCloseTab = $state(false);
+  let renaming = $state<string | null>(null);
+  let renameVal = $state("");
+  let dragId: string | null = null;
+  function openChooser(e: MouseEvent) {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    tabMenu = null;
+    chooser = chooser ? null : { x: r.left, y: r.bottom + 4 };
+  }
+  function openTabMenu(e: MouseEvent, tabId: string) {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    chooser = null;
+    confirmCloseTab = false;
+    tabMenu = tabMenu?.id === tabId ? null : { id: tabId, x: r.left, y: r.bottom + 4 };
+  }
+  function addTab(type: Tab["type"]) {
+    chooser = null;
+    if (type !== "terminal") return;
+    if (tabs.length >= 12) { showToast("tab limit reached (12) — close one first"); return; }
+    let n = 1;
+    while (tabs.some((t) => t.title === `Term ${n}`)) n++;
+    const tab: Tab = { id: `term-${Date.now().toString(36)}`, type, title: `Term ${n}`, params: {} };
+    tabs = [...tabs, tab];
+    showRunTab(tab.id);
+    setTimeout(() => attachTerm(tab.id), 0);
+  }
+  function closeTab(tabId: string) {
+    const idx = tabs.findIndex((t) => t.id === tabId);
+    if (idx < 0) return;
+    const o = termObjs[tabId];
+    if (o) { try { o.ws.close(); } catch {} o.term.dispose(); delete termObjs[tabId]; }
+    delete termEls[tabId]; delete termState[tabId];
+    tabs = tabs.filter((t) => t.id !== tabId);
+    tabMenu = null; confirmCloseTab = false;
+    if (runTab === tabId) {
+      const next = tabs[Math.min(idx, tabs.length - 1)];
+      runTab = next ? next.id : "Preview";
+      if (next) setTimeout(() => attachTerm(next.id), 0);
+    }
+    persistLayout();
+  }
+  function moveTab(tabId: string, delta: number) {
+    const i = tabs.findIndex((t) => t.id === tabId), j = i + delta;
+    if (i < 0 || j < 0 || j >= tabs.length) return;
+    const next = [...tabs];
+    [next[i], next[j]] = [next[j], next[i]];
+    tabs = next; persistLayout();
+  }
+  function dropOn(targetId: string) {
+    if (!dragId || dragId === targetId) return;
+    const from = tabs.findIndex((t) => t.id === dragId), to = tabs.findIndex((t) => t.id === targetId);
+    if (from < 0 || to < 0) return;
+    const next = [...tabs];
+    const [m] = next.splice(from, 1);
+    next.splice(to, 0, m);
+    tabs = next; dragId = null; persistLayout();
+  }
+  function startRename(t: Tab) { tabMenu = null; renaming = t.id; renameVal = t.title; }
+  function commitRename() {
+    if (renaming === null) return;
+    const t = tabs.find((x) => x.id === renaming);
+    const v = renameVal.trim().slice(0, 40);
+    if (t && v && v !== t.title) { t.title = v; persistLayout(); }
+    renaming = null;
+  }
+  function focusEl(el: HTMLInputElement) { el.focus(); el.select(); }
   function heartbeat() {
     fetch(`${API}/api/playgrounds/${id}/heartbeat`, { method: "POST" }).catch(() => {});
   }
@@ -394,7 +486,7 @@
     return "◦";
   }
   onMount(() => {
-    loadSession().then(() => { listFiles(); attachTerm("Term 1"); loadTrack(); });
+    loadSession().then(async () => { listFiles(); loadTrack(); await loadLayout(); if (termTabs.some((t) => t.id === runTab)) setTimeout(() => attachTerm(runTab), 0); });
     if (typeof window !== "undefined") window.addEventListener("resize", refitTerms);
     view = new EditorView({
       state: EditorState.create({
@@ -435,7 +527,7 @@
   </header>
   <div class="tabs">
     <div class="grp L"><span class="lbl">Learn</span><span class="tab static">Instructions</span><span class="tab static">IDE</span></div>
-    <div class="grp R"><span class="lbl">Run</span>{#each terms as t}<button class="tab" class:active={runTab === t} onclick={() => { showRunTab(t); setTimeout(() => attachTerm(t), 0); }}>{t}</button>{/each}<button class="tab" class:active={runTab === "Preview"} onclick={() => showRunTab("Preview")}>Preview</button><button class="tab" class:active={runTab === "Agent"} onclick={() => showRunTab("Agent")}>Agent</button><button class="add" onclick={addTerm}>+</button></div>
+    <div class="grp R"><span class="lbl">Run</span>{#each termTabs as t (t.id)}<span class="tabwrap" role="presentation" draggable="true" ondragstart={() => (dragId = t.id)} ondragover={(e) => e.preventDefault()} ondrop={() => dropOn(t.id)}>{#if renaming === t.id}<input class="tabedit" aria-label="rename tab" bind:value={renameVal} use:focusEl onblur={commitRename} onkeydown={(e) => { if (e.key === "Enter") commitRename(); else if (e.key === "Escape") renaming = null; }} />{:else}<button class="tab" class:active={runTab === t.id} data-tab={t.id} ondblclick={() => startRename(t)} onclick={() => { showRunTab(t.id); setTimeout(() => attachTerm(t.id), 0); }}>{t.title}</button>{/if}{#if runTab === t.id && renaming !== t.id}<button class="tabmenu" aria-label="tab menu" onclick={(e) => openTabMenu(e, t.id)}>⋯</button>{/if}</span>{/each}<button class="tab" class:active={runTab === "Preview"} onclick={() => showRunTab("Preview")}>Preview</button><button class="tab" class:active={runTab === "Agent"} onclick={() => showRunTab("Agent")}>Agent</button><button class="add" aria-label="new tab" onclick={openChooser}>+</button></div>
   </div>
   <div class="dock" class:noL={hideLearn} class:noR={hideRun}>
     <section class="steps">
@@ -495,8 +587,8 @@
     </section>
     <section class="right">
       <div class="colbar" style="border-bottom:1px solid #222">Run <button onclick={() => (hideRun = true)}>hide ⟩</button></div>
-      {#each terms as t}
-        <div class="rpane term" class:on={runTab === t}><div class="termbar"><span class="tstate {termState[t] ?? 'connecting'}">● {termState[t] ?? "connecting"}</span><button class:alert={termState[t] === "disconnected"} onclick={() => reconnectTerm(t)} title="reconnect shell">⟳ reconnect</button></div><div class="termwrap" bind:this={termEls[t]}></div></div>
+      {#each termTabs as t (t.id)}
+        <div class="rpane term" class:on={runTab === t.id}><div class="termbar"><span class="tstate {termState[t.id] ?? 'connecting'}">● {termState[t.id] ?? "connecting"}</span><button class:alert={termState[t.id] === "disconnected"} onclick={() => reconnectTerm(t.id)} title="reconnect shell">⟳ reconnect</button></div><div class="termwrap" bind:this={termEls[t.id]}></div></div>
       {/each}
       <div class="rpane" class:on={runTab === "Preview"}>
         {#if previewState.ready}
@@ -532,6 +624,29 @@
     <button class="mini ghost" onclick={() => { dirty = false; const p = pendingPath; pendingPath = null; if (p) openFile(p); }}>discard</button>
     <button class="mini ghost" onclick={() => (pendingPath = null)}>cancel</button>
   </div>
+{/if}
+{#if chooser || tabMenu}<div class="menu-veil" role="presentation" onclick={() => { chooser = null; tabMenu = null; }}></div>{/if}
+{#if chooser}
+  <div class="menu" role="menu" aria-label="new tab type" style:left="{chooser.x}px" style:top="{chooser.y}px">
+    <button role="menuitem" onclick={() => addTab("terminal")}>▣ Terminal</button>
+    <button role="menuitem" disabled title="arrives in a later slice">◫ Browser <i>soon</i></button>
+    <button role="menuitem" disabled title="arrives in a later slice">✎ Editor <i>soon</i></button>
+  </div>
+{/if}
+{#if tabMenu}
+  {@const mt = tabs.find((x) => x.id === tabMenu!.id)}
+  {#if mt}
+  <div class="menu" role="menu" aria-label="tab actions" style:left="{tabMenu.x}px" style:top="{tabMenu.y}px">
+    <button role="menuitem" onclick={() => startRename(mt)}>Rename</button>
+    <button role="menuitem" onclick={() => moveTab(mt.id, -1)} disabled={tabs[0]?.id === mt.id}>Move left</button>
+    <button role="menuitem" onclick={() => moveTab(mt.id, 1)} disabled={tabs[tabs.length - 1]?.id === mt.id}>Move right</button>
+    {#if confirmCloseTab}
+      <div class="confirm">end this shell? <button onclick={() => closeTab(mt.id)}>yes, close</button> <button onclick={() => (confirmCloseTab = false)}>keep</button></div>
+    {:else}
+      <button role="menuitem" class="danger" onclick={() => (confirmCloseTab = true)}>Close tab</button>
+    {/if}
+  </div>
+  {/if}
 {/if}
 {#if toast}<div class="toast show">{toast}</div>{/if}
 <button class="fab" id="fabL" style:display={hideLearn ? "block" : "none"} onclick={() => (hideLearn = false)}>⟩</button>
@@ -570,6 +685,18 @@
   .tab{display:inline-flex;align-items:center;height:34px;padding:0 12px;border:1px solid #cbd5e1;border-radius:99px;background:#fff;color:#334155;font-size:14px;cursor:pointer;white-space:nowrap}
   .tab.active{background:var(--ink);color:#fff;border-color:var(--ink)}
   .tab.static{font-weight:700}
+  .tabwrap{display:inline-flex;align-items:center;gap:2px;flex:none}
+  .tabmenu{border:0;background:transparent;color:#334155;font-size:16px;cursor:pointer;padding:0 4px}
+  .tabedit{height:34px;border:1px solid var(--ink);border-radius:99px;padding:0 12px;font-size:14px;width:120px;font-family:var(--font)}
+  .menu-veil{position:fixed;inset:0;z-index:40}
+  .menu{position:fixed;z-index:41;background:#fff;color:var(--ink);border:1px solid #cbd5e1;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.2);padding:4px;min-width:170px;display:flex;flex-direction:column}
+  .menu button{text-align:left;background:none;border:0;padding:8px 12px;border-radius:6px;font-size:13px;cursor:pointer;color:var(--ink)}
+  .menu button:hover:not(:disabled){background:#eef2f7}
+  .menu button:disabled{color:#94a3b8;cursor:not-allowed}
+  .menu button.danger{color:#b91c1c}
+  .menu i{font-size:11px;color:#94a3b8;margin-left:6px}
+  .menu .confirm{padding:8px 12px;font-size:12.5px}
+  .menu .confirm button{display:inline;padding:3px 8px;background:#eef2f7;margin-top:6px}
   .add{border:1px dashed #64748b;background:transparent;color:#334155;border-radius:99px;width:34px;height:34px;font-size:18px;cursor:pointer;flex:none}
   .dock{flex:1;display:grid;grid-template-columns:minmax(240px,26%) minmax(0,1fr) minmax(0,1.5fr);min-height:0}
   .dock.noL{grid-template-columns:0 minmax(0,1fr) minmax(0,1.5fr)}.dock.noR{grid-template-columns:minmax(240px,26%) minmax(0,1fr) 0}

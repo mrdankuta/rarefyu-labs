@@ -1,4 +1,4 @@
-import { SessionSchema, type Session } from "@rarefyu/lab-sdk";
+import { SessionSchema, type Layout, type Session } from "@rarefyu/lab-sdk";
 
 /**
  * Anonymous playground loop (workspace-spec §5–§6, step 1).
@@ -20,6 +20,8 @@ export interface PlaygroundRecord extends Session {
   lastSeenAt: string;
   warned: boolean;
   snapshotAt?: string;
+  /** Persisted tab layout (spec #30); undefined = default layout. */
+  layout?: Layout;
 }
 
 const playgrounds = new Map<string, PlaygroundRecord>();
