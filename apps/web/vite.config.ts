@@ -18,6 +18,7 @@ export default defineConfig({
     proxy: {
       "/api": API_HTTP,
       "/ws": { target: API_WS, ws: true },
+      "/preview": { target: API_HTTP, ws: true },
     },
   },
 });

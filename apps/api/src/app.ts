@@ -19,7 +19,8 @@ import {
 import { driver } from "./drivers";
 import { reconcile } from "./reconcile";
 import { lookupSnapshot, retireWorkspace, runLifecycle } from "./lifecycle";
-import { signPreview, verifyPreview } from "./preview";
+import { signPreview } from "./preview";
+import { resolvePreviewTarget } from "./preview-proxy";
 import { loadTrack } from "./tracks";
 import { getAttempts, getProgress, runCheck, runSolve } from "./checks";
 import {
@@ -284,14 +285,17 @@ app.post("/api/playgrounds/:id/files/reset", async (c) => {
 // --- Signed preview (issue #6): readiness probe + short-TTL signed URL + proxy ---
 app.get("/api/playgrounds/:id/preview", async (c) => {
   const rec = getPlayground(c.req.param("id"));
-  if (!rec) return c.json({ error: "playground not found" }, 404);
+  if (!rec || rec.status === "destroyed") return c.json({ error: "playground not found" }, 404);
+  // Only the workspace's owner may mint preview links for it.
+  if (rec.ownerKey !== ownerFrom(c)) return c.json({ error: "not your workspace" }, 403);
   const port = Number(c.req.query("port") ?? 3000);
   if (!Number.isInteger(port) || port < 1 || port > 65535)
     return c.json({ error: "invalid port" }, 400);
-  // Readiness: can we open the port in the session netns? (local stand-in: api host.)
+  // Readiness: does anything accept connections on that port inside the workspace?
   let ready = false;
   try {
-    const probe = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2000) });
+    const a = await driver.address(rec.id, port);
+    const probe = await fetch(`http://${a.host}:${a.port}/`, { signal: AbortSignal.timeout(2000) });
     ready = probe.status < 500;
   } catch {
     ready = false;
@@ -301,26 +305,28 @@ app.get("/api/playgrounds/:id/preview", async (c) => {
   return c.json({ ready: true, port, url: `/preview/${token}/`, expiresInSec: 60 });
 });
 
-// Proxied app bytes. Token in path so iframes need no headers.
+// Proxied app bytes. Token in path so iframes need no headers. (WebSocket upgrades: see server.ts.)
 app.all("/preview/:token/*", async (c) => {
-  const tail = c.req.param("*") ?? "";
-  const qs = new URL(c.req.url).search;
-  const v = verifyPreview(c.req.param("token"));
-  if ("error" in v) return c.json({ error: v.error }, 403);
-  const rec = getPlayground(v.sessionId);
-  if (!rec || rec.status === "destroyed")
-    return c.json({ error: "session gone — reopen the playground" }, 404);
-  const target = `http://127.0.0.1:${v.port}/${tail}${qs}`;
-  const init: RequestInit = { method: c.req.method, headers: c.req.raw.headers };
+  const reqUrl = new URL(c.req.url);
+  // Everything after /preview/<token>/ (Hono's wildcard param is not reliable across versions).
+  const tail = reqUrl.pathname.split("/").slice(3).join("/");
+  const qs = reqUrl.search;
+  const t = await resolvePreviewTarget(c.req.param("token"));
+  if ("error" in t) return c.json({ error: t.error }, t.status);
+  const target = `http://${t.host}:${t.port}/${tail}${qs}`;
+  const headers = new Headers(c.req.raw.headers);
+  headers.delete("cookie"); // never leak the platform session into learner apps
+  headers.delete("authorization");
+  const init: RequestInit = { method: c.req.method, headers };
   if (c.req.method !== "GET" && c.req.method !== "HEAD") {
     init.body = await c.req.raw.arrayBuffer();
     (init as Record<string, unknown>).duplex = "half";
   }
   try {
-    const upstream = await fetch(target, { ...init, signal: AbortSignal.timeout(30_000) });
+    const upstream = await fetch(target, { ...init, signal: AbortSignal.timeout(30_000), redirect: "manual" });
     return new Response(upstream.body, { status: upstream.status, headers: upstream.headers });
   } catch {
-    return c.json({ error: `app on :${v.port} stopped responding — restart it and refresh` }, 502);
+    return c.json({ error: `app on :${t.port} stopped responding — restart it and refresh` }, 502);
   }
 });
 

@@ -76,7 +76,7 @@ describe("tracks + in-session checks", () => {
 
   test("preview readiness: waiting when nothing listens", async () => {
     const id = await makePlayground();
-    const res = await app.request(`/api/playgrounds/${id}/preview?port=39999`);
+    const res = await app.request(`/api/playgrounds/${id}/preview?port=39999`, { headers: H });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ready).toBe(false);
