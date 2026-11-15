@@ -331,10 +331,22 @@
     const ws = new WebSocket(wsUrl(name));
     termState[name] = "connecting";
     ws.onopen = () => { termState[name] = "connected"; };
+    // Lab-declared startup (cd workdir / run cmd) fires once, after the server confirms the shell is attached.
+    const runStartup = () => {
+      const tab = tabs.find((t) => t.id === name);
+      if (tab && !tab.params.started && (tab.params.cmd || tab.params.workdir)) {
+        const sh = (v: string) => `'${v.replace(/'/g, `'\\''`)}'`;
+        const line = [tab.params.workdir ? `cd ${sh(String(tab.params.workdir))}` : "", tab.params.cmd ? String(tab.params.cmd) : ""].filter(Boolean).join(" && ");
+        ws.send(JSON.stringify({ data: `${line}\r` }));
+        tab.params.started = true;
+        persistLayout();
+      }
+    };
     ws.onmessage = (e) => {
       try {
         const m = JSON.parse(e.data);
-        if (m.type === "data") term.write(m.data);
+        if (m.type === "ready") runStartup();
+        else if (m.type === "data") term.write(m.data);
         else if (m.type === "error") term.writeln(`\r\n[relay: ${m.error}]`);
       } catch { term.write(e.data); }
     };

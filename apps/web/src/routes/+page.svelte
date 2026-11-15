@@ -20,7 +20,7 @@
       const r = await fetch("/api/playgrounds", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ track: "demo-agent" }),
       });
       if (r.status === 503) {
         const b = await r.json().catch(() => ({}));

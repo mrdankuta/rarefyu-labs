@@ -22,7 +22,7 @@ import { reconcile } from "./reconcile";
 import { lookupSnapshot, retireWorkspace, runLifecycle } from "./lifecycle";
 import { PREVIEW_TTL_SEC, signPreview } from "./preview";
 import { resolvePreviewTarget } from "./preview-proxy";
-import { loadTrack } from "./tracks";
+import { loadTrack, trackLayout } from "./tracks";
 import { getAttempts, getProgress, runCheck, runSolve } from "./checks";
 import {
   countGuidedToday,
@@ -137,6 +137,15 @@ app.post("/api/playgrounds", async (c) => {
   const mode = body.mode === "guided" ? "guided" : "playground";
   if (mode === "guided" && !who.userId)
     return c.json({ error: "sign in to start a guided lab", remedy: "log in, then retry with your session token" }, 401);
+  // A lab can declare its starting tabs; resolve before creating anything.
+  let layout: ReturnType<typeof trackLayout>;
+  if (body.track !== undefined) {
+    try {
+      layout = trackLayout(await loadTrack(String(body.track)));
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 404);
+    }
+  }
   let { ownerKey } = who;
   if (!who.userId && !who.cookie) {
     // First visit: issue the identity cookie that will own this anonymous workspace.
@@ -159,6 +168,7 @@ app.post("/api/playgrounds", async (c) => {
       labId: body.labId ? String(body.labId) : undefined,
       ttlMin: body.ttlMin ? Number(body.ttlMin) : undefined,
     });
+    if (layout) rec.layout = layout;
   } catch (err) {
     const { status = 500, code } = err as { status?: number; code?: string };
     if (code === "quota_owner") {

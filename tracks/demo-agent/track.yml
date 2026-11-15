@@ -3,5 +3,5 @@ slug: demo-agent
 mode: guided
 ttl: 120
 tabs:
-  - { title: Terminal, type: terminal }
+  - { title: Terminal, type: terminal, cmd: "echo Welcome! Follow the steps on the left." }
   - { title: Preview, type: website, port: 3000 }

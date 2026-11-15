@@ -1,4 +1,5 @@
 import YAML from "yaml";
+import { MAX_TABS, type Layout, type Tab } from "@rarefyu/lab-sdk";
 
 /**
  * v2 authoring loader (workspace-spec §3, issue #6).
@@ -6,12 +7,22 @@ import YAML from "yaml";
  * Assignment frontmatter: title, difficulty, timelimit, tabs.
  */
 
+/** Tab as declared in track.yml / assignment frontmatter (Instruqt-style types). */
+export interface TrackTab {
+  title: string;
+  type: string; // terminal | editor | service | website | browser
+  port?: number;
+  path?: string; // website/service: start path; editor: file to open
+  workdir?: string; // terminal
+  cmd?: string; // terminal: run once on first open
+}
+
 export interface TrackStep {
   slug: string;
   title: string;
   difficulty?: string;
   timelimit?: number;
-  tabs?: { title: string; type: string; port?: number }[];
+  tabs?: TrackTab[];
   assignment: string;
   hasCheck: boolean;
   hasSolve: boolean;
@@ -22,7 +33,7 @@ export interface Track {
   title: string;
   mode: string;
   ttl: number;
-  tabs: { title: string; type: string; port?: number }[];
+  tabs: TrackTab[];
   config: Record<string, unknown>;
   steps: TrackStep[];
 }
@@ -91,4 +102,30 @@ export async function stepScript(slug: string, step: string, kind: "check" | "so
   const src = await readIf(`${ROOT}/${slug}/${step}/${kind}`);
   if (!src) throw new Error(`no ${kind} script for ${slug}/${step}`);
   return src;
+}
+
+/**
+ * Initial shell layout declared by a track. Unknown tab types are skipped;
+ * a track with no usable tabs yields undefined so the platform default applies.
+ */
+export function trackLayout(track: Pick<Track, "tabs">): Layout | undefined {
+  const tabs: Tab[] = [];
+  track.tabs.slice(0, MAX_TABS).forEach((t, i) => {
+    const title = String(t.title ?? "").trim().slice(0, 40) || `Tab ${i + 1}`;
+    const base = { id: `t${i + 1}`, title };
+    if (t.type === "terminal") {
+      const params: Tab["params"] = {};
+      if (t.workdir) params.workdir = String(t.workdir).slice(0, 200);
+      if (t.cmd) params.cmd = String(t.cmd).slice(0, 400);
+      tabs.push({ ...base, type: "terminal", params });
+    } else if (t.type === "website" || t.type === "service" || t.type === "browser") {
+      tabs.push({ ...base, type: "browser", params: { port: Number(t.port) || 3000, path: t.path ? String(t.path) : "/" } });
+    } else if (t.type === "editor" && t.path) {
+      tabs.push({ ...base, type: "editor", params: { path: String(t.path) } });
+    }
+  });
+  if (!tabs.length) return undefined;
+  const firstTerm = tabs.find((t) => t.type === "terminal");
+  const firstEditor = tabs.find((t) => t.type === "editor");
+  return { tabs, activeId: (firstTerm ?? tabs.find((t) => t.type !== "editor"))?.id ?? null, activeEditorId: firstEditor?.id ?? null };
 }
