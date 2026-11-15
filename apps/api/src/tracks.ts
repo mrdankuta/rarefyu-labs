@@ -129,3 +129,34 @@ export function trackLayout(track: Pick<Track, "tabs">): Layout | undefined {
   const firstEditor = tabs.find((t) => t.type === "editor");
   return { tabs, activeId: (firstTerm ?? tabs.find((t) => t.type !== "editor"))?.id ?? null, activeEditorId: firstEditor?.id ?? null };
 }
+
+export interface TrackSummary {
+  slug: string;
+  title: string;
+  mode: string;
+  steps: number;
+  minutes: number;
+  difficulties: string[];
+}
+
+/** Lessons available to launch: every folder under tracks/ with a track.yml. */
+export async function listTracks(): Promise<TrackSummary[]> {
+  const out: TrackSummary[] = [];
+  for await (const rel of new Bun.Glob("*/track.yml").scan({ cwd: ROOT })) {
+    const slug = rel.split("/")[0];
+    try {
+      const t = await loadTrack(slug);
+      out.push({
+        slug,
+        title: t.title,
+        mode: t.mode,
+        steps: t.steps.length,
+        minutes: t.steps.reduce((n, s) => n + (s.timelimit ?? 0), 0),
+        difficulties: [...new Set(t.steps.map((s) => s.difficulty).filter(Boolean) as string[])],
+      });
+    } catch {
+      /* a broken track must not hide the others */
+    }
+  }
+  return out.sort((a, b) => a.title.localeCompare(b.title));
+}

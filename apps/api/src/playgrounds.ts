@@ -22,6 +22,8 @@ export interface PlaygroundRecord extends Session {
   lastSeenAt: string;
   warned: boolean;
   snapshotAt?: string;
+  /** Lesson (track slug) this workspace was launched for; undefined = free playground. */
+  track?: string;
   /** Set when the backend lost this workspace (reconciler). */
   lostReason?: string;
   /** Persisted tab layout (spec #30); undefined = default layout. */
@@ -112,6 +114,7 @@ function assertCapacity(ownerKey: string) {
 export function createPlayground(opts: {
   ownerKey: string;
   userId?: string;
+  track?: string;
   mode?: "playground" | "guided";
   labId?: string;
   ttlMin?: number;
@@ -130,6 +133,7 @@ export function createPlayground(opts: {
     previewBase: "http://localhost:3000/preview/stub",
     mode: opts.mode ?? "playground",
     userId: opts.userId,
+    track: opts.track,
     expiresAt: new Date(now + ttlMin * 60_000).toISOString(),
     ownerKey: opts.ownerKey,
     createdAt: new Date(now).toISOString(),

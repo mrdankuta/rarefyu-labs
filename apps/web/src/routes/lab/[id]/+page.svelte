@@ -36,7 +36,7 @@
   });
 
   // --- session + countdown ---
-  interface Playground { id: string; status: string; expiresAt: string; warned?: boolean }
+  interface Playground { id: string; status: string; expiresAt: string; warned?: boolean; track?: string }
   let pg = $state<Playground | null>(null);
   let loading = $state(true);
   let loadError = $state("");
@@ -51,6 +51,7 @@
       if (r.status === 403) throw new Error("this workspace belongs to another browser or account");
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       pg = await r.json();
+      TRACK = pg?.track ?? "";
       tickTtl();
     } catch (e) {
       loadError = `couldn't load this playground (${(e as Error).message})`;
@@ -467,7 +468,9 @@
   setInterval(heartbeat, 5 * 60_000);
 
   // --- demo track + in-session checks + preview (issue #6) ---
-  const TRACK = "demo-agent";
+  // Lesson this workspace was launched for; empty = free playground (no instructions panel).
+  let TRACK = $state("");
+  const hasLesson = $derived(TRACK !== "");
   interface Step { slug: string; title: string; assignment: string }
   let steps = $state<Step[]>([]);
   let curStep = $state(0);
@@ -480,6 +483,7 @@
   const PREVIEW_REFRESH_MS = 25 * 60_000; // tokens live 30 min
   async function loadTrack() {
     try {
+      if (!TRACK) return;
       const r = await fetch(`${API}/api/tracks/${TRACK}`);
       if (r.ok) steps = (await r.json()).steps;
     } catch { /* track panel stays empty */ }
@@ -708,7 +712,7 @@
 
 <div class="win">
   <header class="hdr">
-    <div class="l"><span class="logo">R</span><span class="title">playground › {id.slice(0, 8)}</span></div>
+    <div class="l"><span class="logo">R</span><span class="title">{hasLesson ? "lesson" : "playground"} › {id.slice(0, 8)}</span></div>
     <div class="r">
       <span class="dot" style:background={pg?.status === "active" ? "#22c55e" : "#f59e0b"}></span>
       <span class="timer" class:urgent={ttlUrgent} title={ttlUrgent ? "less than 15 minutes left — save your work" : "time remaining"}>{ttlText}</span>
@@ -722,10 +726,10 @@
     </div>
   </header>
   <div class="tabs">
-    <div class="grp L"><span class="lbl">Learn</span><span class="tab static">Instructions</span><span class="tab static">IDE</span></div>
+    {#if hasLesson}<div class="grp L"><span class="lbl">Learn</span><span class="tab static">Instructions</span><span class="tab static">IDE</span></div>{/if}
     <div class="grp R"><span class="lbl">Run</span>{#each runTabs as t (t.id)}<span class="tabwrap" role="presentation" draggable="true" ondragstart={() => (dragId = t.id)} ondragover={(e) => e.preventDefault()} ondrop={() => dropOn(t.id)}>{#if renaming === t.id}<input class="tabedit" aria-label="rename tab" bind:value={renameVal} use:focusEl onblur={commitRename} onkeydown={(e) => { if (e.key === "Enter") commitRename(); else if (e.key === "Escape") renaming = null; }} />{:else}<button class="tab" class:active={runTab === t.id} data-tab={t.id} ondblclick={() => startRename(t)} onclick={() => { showRunTab(t.id); if (t.type === "terminal") setTimeout(() => attachTerm(t.id), 0); else checkBrowser(t.id); }}>{t.type === "browser" ? "◫ " : ""}{t.title}</button>{/if}{#if runTab === t.id && renaming !== t.id}<button class="tabmenu" aria-label="tab menu" onclick={(e) => openTabMenu(e, t.id)}>⋯</button>{/if}</span>{/each}<button class="tab" class:active={runTab === "Agent"} onclick={() => showRunTab("Agent")}>Agent</button><button class="add" aria-label="new tab" onclick={openChooser}>+</button></div>
   </div>
-  <div class="dock" class:noL={hideLearn} class:noR={hideRun}>
+  <div class="dock" class:noL={hideLearn || !hasLesson} class:noR={hideRun}>
     <section class="steps">
       <div class="colbar">Learn <button onclick={() => (hideLearn = true)}>⟨ hide</button></div>
       <div class="body">
@@ -735,7 +739,7 @@
           <p style="color:#b91c1c">{loadError}</p>
           <p><button class="retry" onclick={loadSession}>↻ retry</button> <a href="/">← start a fresh playground</a></p>
         {/if}
-        <div class="meta">demo-agent · {steps.length ? `step ${curStep + 1} of ${steps.length}` : "free playground"}</div>
+        <div class="meta">{TRACK} · {steps.length ? `step ${curStep + 1} of ${steps.length}` : "free playground"}</div>
         {#each steps as s, i}
           <div class="step" class:cur={i === curStep} onclick={() => (curStep = i, checkHint = "", checkOk = null)}><span class="tick">{passedSteps.has(s.slug) ? "✓ " : ""}</span>{s.title}</div>
         {/each}
@@ -813,7 +817,7 @@
       <div class="rpane" class:on={runTab === "Agent"}>
         <div class="agent"><b>Lab agent</b>
           <div class="apolicy">file ✓ allowed · shell ⚠ approval · network/creds ⛔ forbidden</div>
-          <button class="abtn" onclick={() => { showRunTab("Agent"); agentFix(); }}>✨ fix step 1 with the agent</button>
+          {#if hasLesson}<button class="abtn" onclick={() => { showRunTab("Agent"); agentFix(); }}>✨ fix step 1 with the agent</button>{/if}
           {#if agentStatus}<p style="color:#94a3b8">run: {agentStatus}</p>{/if}
           {#each agentPending as p}
             <div class="approve">{p.tool} needs approval — {p.reason}<br /><code>{JSON.stringify(p.args).slice(0, 160)}</code><br />
@@ -863,7 +867,7 @@
   {/if}
 {/if}
 {#if toast}<div class="toast show">{toast}</div>{/if}
-<button class="fab" id="fabL" style:display={hideLearn ? "block" : "none"} onclick={() => (hideLearn = false)}>⟩</button>
+<button class="fab" id="fabL" style:display={hasLesson && hideLearn ? "block" : "none"} onclick={() => (hideLearn = false)}>⟩</button>
 <button class="fab" id="fabR" style:display={hideRun ? "block" : "none"} onclick={() => (hideRun = false)}>⟨</button>
 
 <style>

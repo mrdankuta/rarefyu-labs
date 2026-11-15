@@ -63,3 +63,25 @@ describe("lab-declared default tabs", () => {
     expect(trackLayout({ tabs: [] })).toBeUndefined();
   });
 });
+
+describe("lessons vs playground", () => {
+  test("GET /api/tracks lists launchable lessons", async () => {
+    const r = await app.request("/api/tracks");
+    expect(r.status).toBe(200);
+    const { tracks } = await r.json();
+    const demo = tracks.find((t: { slug: string }) => t.slug === "demo-agent");
+    expect(demo.title).toBeTruthy();
+    expect(demo.steps).toBe(5);
+    expect(demo.minutes).toBeGreaterThan(0);
+  });
+
+  test("a workspace remembers its lesson; a free playground has none", async () => {
+    const lesson = await (await create({ track: "demo-agent" })).json();
+    expect(lesson.track).toBe("demo-agent");
+    await driver.destroy(lesson.id);
+    clearPlaygrounds();
+    const free = await (await create({})).json();
+    expect(free.track).toBeUndefined();
+    await driver.destroy(free.id);
+  });
+});

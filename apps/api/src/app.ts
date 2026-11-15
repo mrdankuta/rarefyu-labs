@@ -24,7 +24,7 @@ import { auditEvent } from "./teach";
 import { lookupSnapshot, retireWorkspace, runLifecycle } from "./lifecycle";
 import { PREVIEW_TTL_SEC, signPreview } from "./preview";
 import { resolvePreviewTarget } from "./preview-proxy";
-import { loadTrack, trackLayout } from "./tracks";
+import { listTracks, loadTrack, trackLayout } from "./tracks";
 import { getAttempts, getProgress, runCheck, runSolve } from "./checks";
 import {
   countGuidedToday,
@@ -166,6 +166,7 @@ app.post("/api/playgrounds", async (c) => {
     rec = createPlayground({
       ownerKey,
       userId: who.userId ?? undefined,
+      track: body.track !== undefined ? String(body.track) : undefined,
       mode,
       labId: body.labId ? String(body.labId) : undefined,
       ttlMin: body.ttlMin ? Number(body.ttlMin) : undefined,
@@ -434,6 +435,8 @@ app.all("/preview/:token/*", async (c) => {
 });
 
 // --- Tracks + in-session checks (issue #6) ---
+app.get("/api/tracks", async (c) => c.json({ tracks: await listTracks() }));
+
 app.get("/api/tracks/:slug", async (c) => {
   try {
     return c.json(await loadTrack(c.req.param("slug")));
