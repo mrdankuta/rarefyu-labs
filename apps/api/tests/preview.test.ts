@@ -77,8 +77,11 @@ describe("preview proxy", () => {
   });
 
   test("another user cannot mint a preview for my workspace", async () => {
+    process.env.ENFORCE_OWNERSHIP = "1";
     const id = await newPg();
     expect((await preview(id, PORT, OTHER)).status).toBe(403);
+    expect((await preview(id, PORT, OWNER)).status).toBe(200);
+    process.env.ENFORCE_OWNERSHIP = "0";
     await driver.destroy(id);
   });
 

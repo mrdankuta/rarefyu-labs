@@ -1,4 +1,5 @@
-import { app } from "./app";
+import { app, canAccess } from "./app";
+import { getPlayground } from "./playgrounds";
 import { driver } from "./drivers";
 import { resolvePreviewTarget } from "./preview-proxy";
 
@@ -19,6 +20,8 @@ export function startServer(port: number) {
       if (url.pathname === "/ws/terminal") {
         const session = url.searchParams.get("session") ?? "";
         const term = url.searchParams.get("term") ?? "main";
+        const rec = getPlayground(session);
+        if (rec && !(await canAccess(req.headers, rec))) return new Response("not your workspace", { status: 403 });
         const data: WsData = { kind: "terminal", session, term };
         if (server.upgrade(req, { data })) return undefined as unknown as Response;
         return new Response("websocket upgrade failed", { status: 426 });

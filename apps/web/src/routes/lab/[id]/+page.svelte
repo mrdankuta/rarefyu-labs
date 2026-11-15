@@ -48,6 +48,7 @@
     try {
       const r = await fetch(`${API}/api/playgrounds/${id}`);
       if (r.status === 404) throw new Error("gone — it expired or was stopped");
+      if (r.status === 403) throw new Error("this workspace belongs to another browser or account");
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       pg = await r.json();
       tickTtl();

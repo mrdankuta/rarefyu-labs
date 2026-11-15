@@ -16,6 +16,8 @@ export const SNAPSHOT_RETENTION_DAYS = 7;
 
 export interface PlaygroundRecord extends Session {
   ownerKey: string;
+  /** Set when an authenticated user created the workspace; ownership is then by user id. */
+  userId?: string;
   createdAt: string;
   lastSeenAt: string;
   warned: boolean;
@@ -101,6 +103,8 @@ function assertCapacity(ownerKey: string) {
 
 export function createPlayground(opts: {
   ownerKey: string;
+  userId?: string;
+  mode?: "playground" | "guided";
   labId?: string;
   ttlMin?: number;
   now?: number;
@@ -116,7 +120,8 @@ export function createPlayground(opts: {
     status: "active",
     terminalWs: "ws://localhost:3000/ws/terminal?stub=1",
     previewBase: "http://localhost:3000/preview/stub",
-    mode: "playground",
+    mode: opts.mode ?? "playground",
+    userId: opts.userId,
     expiresAt: new Date(now + ttlMin * 60_000).toISOString(),
     ownerKey: opts.ownerKey,
     createdAt: new Date(now).toISOString(),

@@ -3,6 +3,15 @@
   let starting = $state(false);
   let error = $state("");
   let existingId = $state<string | null>(null);
+  let current = $state<{ id: string } | null>(null);
+  import { onMount } from "svelte";
+  onMount(async () => {
+    // Reattach: if this browser already owns a live workspace, offer to resume it.
+    try {
+      const r = await fetch("/api/workspaces/current");
+      if (r.ok) current = await r.json();
+    } catch { /* offline: landing still works */ }
+  });
   async function start() {
     starting = true;
     error = "";
@@ -42,7 +51,11 @@
   <main>
     <h1>A shell, an editor and an agent — one URL, nothing to install.</h1>
     <p class="lead">Start a playground and get a sandboxed workspace in seconds. No account needed.</p>
-    <button class="cta" onclick={start} disabled={starting}>{starting ? "starting…" : "▶ Start a playground"}</button>
+    {#if current}
+      <a class="cta resume" href="/lab/{current.id}">↻ Resume your playground</a>
+    {:else}
+      <button class="cta" onclick={start} disabled={starting}>{starting ? "starting…" : "▶ Start a playground"}</button>
+    {/if}
     {#if error}<p class="err" role="alert">{error}
       {#if existingId}<a href="/lab/{existingId}">Resume it →</a>{/if}</p>{/if}
     <ul class="facts">
@@ -66,6 +79,7 @@
   .lead{font-size:17px;color:#475569;margin:0 0 24px}
   .cta{background:#18252f;color:#fff;font-weight:700;padding:12px 24px;border-radius:8px;border:0;cursor:pointer;font-size:16px}
   .cta:disabled{opacity:.6;cursor:default}
+  .cta.resume{display:inline-block;text-decoration:none}
   .err{color:#b91c1c}.err a{color:#b91c1c;text-decoration:underline;font-weight:600}
   .facts{list-style:none;padding:0;margin:32px 0 0;display:grid;gap:10px;color:#334155}
   .facts li{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px}

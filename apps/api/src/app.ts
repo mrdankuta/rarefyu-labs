@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { setCookie } from "hono/cookie";
 import { DEFAULT_LAYOUT, LayoutSchema, SessionSchema } from "@rarefyu/lab-sdk";
 import {
   createPlayground,
@@ -83,12 +84,46 @@ app.delete("/api/sessions/:id", (c) => {
   return c.json({ ok: true });
 });
 
-function ownerFrom(c: { req: { header: (h: string) => string | undefined } }): string {
-  const ip =
-    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || "127.0.0.1";
-  const cookie = c.req.header("x-session-key") || "";
-  return identityKey(ip, cookie);
+function clientIp(c: { req: { header: (h: string) => string | undefined } }) {
+  return c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || "127.0.0.1";
 }
+
+/** Anonymous identity cookie: x-session-key header (tests/tools) or the rfy_sid cookie. */
+function cookieOf(c: { req: { header: (h: string) => string | undefined } }): string {
+  const h = c.req.header("x-session-key");
+  if (h) return h;
+  const m = /(?:^|;\s*)rfy_sid=([\w-]+)/.exec(c.req.header("cookie") ?? "");
+  return m?.[1] ?? "";
+}
+
+/** Who is calling: signed-in users own by user id, everyone else by IP + server-issued cookie. */
+async function callerOf(c: Parameters<typeof cookieOf>[0]) {
+  const userId = await resolveUser(c);
+  const cookie = cookieOf(c);
+  const ownerKey = userId ? `user:${userId}` : identityKey(clientIp(c), cookie);
+  return { userId, cookie, ownerKey };
+}
+
+/**
+ * Workspace access rule. Set ENFORCE_OWNERSHIP=0 only in dev/tests.
+ * User-owned workspaces need that user; anonymous ones need the cookie they were created with.
+ */
+async function canAccess(headers: Headers, rec: { userId?: string; ownerKey: string }): Promise<boolean> {
+  if (process.env.ENFORCE_OWNERSHIP === "0") return true;
+  const c = { req: { header: (n: string) => headers.get(n) ?? undefined } };
+  if (rec.userId) return (await resolveUser(c)) === rec.userId;
+  const recCookie = rec.ownerKey.split("::")[1] ?? "anon";
+  return recCookie === "anon" || cookieOf(c) === recCookie;
+}
+export { canAccess };
+
+async function authz(c: any, next: () => Promise<void>) {
+  const rec = getPlayground(c.req.param("id"));
+  if (rec && !(await canAccess(c.req.raw.headers, rec))) return c.json({ error: "not your workspace" }, 403);
+  await next();
+}
+app.use("/api/playgrounds/:id", authz);
+app.use("/api/playgrounds/:id/*", authz);
 
 // Anonymous playground loop — no auth (workspace-spec §5).
 // ownerKey never leaves the server: public() strips it from responses.
@@ -98,10 +133,29 @@ function publicRec(rec: Record<string, unknown>) {
 }
 app.post("/api/playgrounds", async (c) => {
   const body = await c.req.json().catch(() => ({}));
+  const who = await callerOf(c);
+  const mode = body.mode === "guided" ? "guided" : "playground";
+  if (mode === "guided" && !who.userId)
+    return c.json({ error: "sign in to start a guided lab", remedy: "log in, then retry with your session token" }, 401);
+  let { ownerKey } = who;
+  if (!who.userId && !who.cookie) {
+    // First visit: issue the identity cookie that will own this anonymous workspace.
+    const sid = crypto.randomUUID();
+    setCookie(c, "rfy_sid", sid, {
+      httpOnly: true,
+      sameSite: "Lax",
+      path: "/",
+      maxAge: 86_400,
+      secure: c.req.header("x-forwarded-proto") === "https",
+    });
+    ownerKey = identityKey(clientIp(c), sid);
+  }
   let rec;
   try {
     rec = createPlayground({
-      ownerKey: ownerFrom(c),
+      ownerKey,
+      userId: who.userId ?? undefined,
+      mode,
       labId: body.labId ? String(body.labId) : undefined,
       ttlMin: body.ttlMin ? Number(body.ttlMin) : undefined,
     });
@@ -109,7 +163,7 @@ app.post("/api/playgrounds", async (c) => {
     const { status = 500, code } = err as { status?: number; code?: string };
     if (code === "quota_owner") {
       // Same owner only: expose their own live session id so the UI can offer "resume".
-      const live = liveSessionFor(ownerFrom(c));
+      const live = liveSessionFor(ownerKey);
       return c.json({ error: (err as Error).message, code, existingId: live?.id }, 429);
     }
     if (code === "quota_ip") return c.json({ error: (err as Error).message, code }, 429);
@@ -137,6 +191,14 @@ app.post("/api/playgrounds", async (c) => {
   }
   void runLifecycle(); // opportunistic lifecycle pass on each create
   return c.json(publicRec(rec as unknown as Record<string, unknown>), 201);
+});
+
+// Reattach: the caller's own live workspace, if any (landing page offers "resume").
+app.get("/api/workspaces/current", async (c) => {
+  const who = await callerOf(c);
+  const rec = liveSessionFor(who.ownerKey);
+  if (!rec) return c.json({ error: "no live workspace" }, 404);
+  return c.json(publicRec(rec as unknown as Record<string, unknown>));
 });
 
 app.get("/api/playgrounds/:id", (c) => {
@@ -312,8 +374,6 @@ app.post("/api/playgrounds/:id/files/reset", async (c) => {
 app.get("/api/playgrounds/:id/preview", async (c) => {
   const rec = getPlayground(c.req.param("id"));
   if (!rec || rec.status === "destroyed") return c.json({ error: "playground not found" }, 404);
-  // Only the workspace's owner may mint preview links for it.
-  if (rec.ownerKey !== ownerFrom(c)) return c.json({ error: "not your workspace" }, 403);
   const port = Number(c.req.query("port") ?? 3000);
   if (!Number.isInteger(port) || port < 1 || port > 65535)
     return c.json({ error: "invalid port" }, 400);
