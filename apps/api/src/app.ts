@@ -12,7 +12,7 @@ import {
   snapshotRetentionUntil,
   sweepPlaygrounds,
 } from "./playgrounds";
-import { driver } from "./drivers/local";
+import { driver } from "./drivers";
 import { signPreview, verifyPreview } from "./preview";
 import { loadTrack } from "./tracks";
 import { getAttempts, getProgress, runCheck, runSolve } from "./checks";

@@ -1,3 +1,4 @@
+import { resolveInside } from "./paths";
 import type { DriverCapabilities, ExecDriver, TerminalHandle, WorkspaceAddress } from "./types";
 
 const ROOT =
@@ -187,19 +188,7 @@ export class LocalDriver implements ExecDriver {
 
   /** Guard: resolve sub-path strictly inside the workspace. */
   private resolve(sessionId: string, rel: string): string {
-    if (rel.includes("\0")) throw new Error("invalid path");
-    const base = this.dir(sessionId);
-    const abs = rel ? `${base}/${rel}` : base;
-    const norm = abs.split("/").reduce<string[]>((acc, seg) => {
-      if (seg === "" || seg === ".") return acc;
-      if (seg === "..") acc.pop();
-      else acc.push(seg);
-      return acc;
-    }, []).join("/");
-    const full = `/${norm}`;
-    if (full !== base && !full.startsWith(`${base}/`))
-      throw new Error("path escapes workspace");
-    return full;
+    return resolveInside(this.dir(sessionId), rel);
   }
 
   private async ensureStarter(sessionId: string) {
@@ -287,6 +276,3 @@ export class LocalDriver implements ExecDriver {
     await Bun.$`sh -c ${`cd '${dir}' && find . -mindepth 1 -maxdepth 1 -exec rm -rf {} + && cp -a '${starter}/.' '${dir}/' && rm -f '${dir}/.starter-ok'`}`.quiet();
   }
 }
-
-/** Singleton: one driver per API process (matches SandboxWarmPool shape). */
-export const driver: ExecDriver = new LocalDriver();

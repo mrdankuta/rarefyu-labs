@@ -185,7 +185,9 @@
       } catch { term.write(e.data); }
     };
     ws.onclose = () => { termState[name] = "disconnected"; term.writeln("\r\n[disconnected — hit ⟳ reconnect]"); };
-    term.onData((d: string) => { if (ws.readyState === 1) ws.send(JSON.stringify({ data: d })); });
+    // Drop xterm's automatic device-attributes replies (ESC [ ? / > ... c): tmux queries them on
+    // attach, and when the reply races the prompt it would be echoed as junk like "0;276;0c".
+    term.onData((d: string) => { if (/^\x1b\[[?>][\d;]*c$/.test(d)) return; if (ws.readyState === 1) ws.send(JSON.stringify({ data: d })); });
     termObjs[name] = { term, ws, fit };
   }
   function showRunTab(name: string) {

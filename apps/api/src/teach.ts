@@ -1,6 +1,6 @@
 import { getAllPlaygroundIds, getPlayground } from "./playgrounds";
 import { getAttempts } from "./checks";
-import { driver } from "./drivers/local";
+import { driver } from "./drivers";
 
 /**
  * Teach console (issue #8). Instructor views derived from session + check

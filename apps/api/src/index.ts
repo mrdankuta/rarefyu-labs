@@ -1,5 +1,5 @@
 import { app } from "./app";
-import { driver } from "./drivers/local";
+import { driver } from "./drivers";
 import { sweepPlaygrounds } from "./playgrounds";
 
 const port = Number(process.env.API_PORT ?? 3000);

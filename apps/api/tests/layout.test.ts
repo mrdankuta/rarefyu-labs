@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { app } from "../src/app";
-import { driver } from "../src/drivers/local";
+import { driver } from "../src/drivers";
 import { clearPlaygrounds } from "../src/playgrounds";
 
 const H = { "content-type": "application/json", "x-session-key": "layout" };

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { driver } from "./drivers/local";
+import { driver } from "./drivers";
 import { stepScript } from "./tracks";
 import { getPlayground } from "./playgrounds";
 

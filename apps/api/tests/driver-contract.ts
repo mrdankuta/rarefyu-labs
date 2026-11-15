@@ -28,8 +28,8 @@ export function driverContract(name: string, make: () => ExecDriver, opts?: { sk
   describe(`ExecDriver contract: ${name}`, () => {
     afterAll(async () => {
       if (opts?.skip) return;
-      for (const id of ids) await d.destroy(id).catch(() => {});
-    });
+      await Promise.all(ids.map((id) => d.destroy(id).catch(() => {})));
+    }, 60_000);
 
     t("reports capabilities", () => {
       const caps = d.capabilities();
