@@ -10,6 +10,7 @@
   let lessons = $state<Lesson[]>([]);
   let lessonsError = $state("");
   let classCode = $state("");
+  let cfg = $state<{ seatsRequired: boolean; className: string | null; showLessons: boolean }>({ seatsRequired: false, className: null, showLessons: true });
   const CODE_KEY = "rfy_class_code";
 
   onMount(async () => {
@@ -20,6 +21,10 @@
       if (r.ok) current = await r.json();
     } catch { /* offline: landing still works */ }
     try {
+      const r = await fetch("/api/config");
+      if (r.ok) cfg = await r.json();
+    } catch { /* keep defaults */ }
+    try {
       const r = await fetch("/api/tracks");
       if (r.ok) lessons = (await r.json()).tracks;
       else lessonsError = "Couldn't load lessons.";
@@ -28,8 +33,9 @@
 
   /** Launch a free playground (no track) or a lesson (track slug). */
   async function start(track?: string) {
-    starting = track ?? "playground";
     error = "";
+    if (cfg.seatsRequired && !classCode.trim()) { error = "Enter your class code first."; return; }
+    starting = track ?? "playground";
     existingId = null;
     try {
       const r = await fetch("/api/playgrounds", {
@@ -69,6 +75,25 @@
 <div class="page">
   <header class="hdr"><span class="logo">R</span><span class="title">RarefyU Labs</span></header>
   <main>
+    {#if cfg.seatsRequired}
+      <h1>Welcome to {cfg.className ?? "the class"}</h1>
+      <p class="lead">Enter the code your instructor gave you.</p>
+      {#if current}
+        <div class="resume-bar">
+          <span>Your workspace is still running.</span>
+          <a class="cta" href="/lab/{current.id}">↻ Resume my workspace</a>
+        </div>
+      {/if}
+      <form class="classform" onsubmit={(e) => { e.preventDefault(); start(); }}>
+        <label class="bigcode">Class code
+          <input id="class-code" bind:value={classCode} placeholder="ABCD-EFGH" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="12" />
+        </label>
+        <button class="cta" type="submit" disabled={starting !== null}>{starting ? "starting…" : "Start my workspace"}</button>
+      </form>
+      {#if error}<p class="err" role="alert">{error}
+        {#if existingId}<a href="/lab/{existingId}">Resume it →</a>{/if}</p>{/if}
+      <p class="sub">Back again? Enter the same code and you land in your workspace.<br />No code? Ask your instructor.</p>
+    {:else}
     <h1>A shell, an editor and an agent — one URL, nothing to install.</h1>
     <p class="lead">Every visit gets its own sandboxed workspace in seconds. No account needed.</p>
 
@@ -92,6 +117,7 @@
       </div>
     </section>
 
+    {#if cfg.showLessons}
     <section aria-labelledby="ls-h">
       <h2 id="ls-h">Lessons</h2>
       <p class="sub">Guided, pre-made lessons: step-by-step instructions beside the same workspace, with checks and hints.</p>
@@ -108,6 +134,7 @@
         {/each}
       </div>
     </section>
+    {/if}
 
     <ul class="facts">
       <li><strong>2 hours</strong> per session, with a live countdown</li>
@@ -115,6 +142,7 @@
       <li><strong>One</strong> live workspace at a time — you can always resume it</li>
     </ul>
     <p class="foot"><a href="/teach">Teach console →</a></p>
+    {/if}
   </main>
 </div>
 
@@ -141,6 +169,9 @@
   .facts{list-style:none;padding:0;margin:32px 0 0;display:grid;gap:10px;color:#334155}
   .facts li{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px}
   .foot{margin-top:32px;font-size:13px}.foot a{color:#475569}
+  .classform{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin:0 0 12px}
+  .bigcode{display:grid;gap:6px;font-size:13px;font-weight:600;flex:1 1 220px}
+  .bigcode input{border:2px solid #18252f;border-radius:8px;padding:12px 14px;font-size:22px;font-family:ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;background:#fff;min-width:0}
   .code{display:grid;gap:4px;font-size:13px;font-weight:600;margin:0 0 12px}
   .code span{font-weight:400;color:#64748b}
   .code input{max-width:200px;border:1px solid #cbd5e1;border-radius:6px;padding:8px 10px;font:inherit;font-family:ui-monospace,monospace;letter-spacing:.08em;text-transform:uppercase}

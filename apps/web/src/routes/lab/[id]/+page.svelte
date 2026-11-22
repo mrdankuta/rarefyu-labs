@@ -295,6 +295,22 @@
 
   // --- terminals (one xterm per term tab, shared session) ---
   let termEls = $state<Record<string, HTMLDivElement | null>>({});
+  // Text size (projector/screen-share friendly); remembered per browser.
+  let fontSize = $state(13);
+  try { const f = Number(localStorage.getItem("rfy_font")); if (f >= 11 && f <= 30) fontSize = f; } catch { /* storage blocked */ }
+  function bumpFont(delta: number) {
+    fontSize = Math.min(30, Math.max(11, fontSize + delta));
+    try { localStorage.setItem("rfy_font", String(fontSize)); } catch { /* storage blocked */ }
+    for (const o of Object.values(termObjs)) { o.term.options.fontSize = fontSize; try { o.fit.fit(); } catch {} }
+  }
+  // Is the coding agent usable in this workspace? (never exposes the key)
+  let agent = $state<{ ready: boolean; model?: string | null; reason?: string } | null>(null);
+  async function loadAgentStatus() {
+    try {
+      const r = await fetch(`${API}/api/playgrounds/${id}/agent-status`);
+      if (r.ok) agent = await r.json();
+    } catch { /* chip simply stays hidden */ }
+  }
   let termState = $state<Record<string, "connecting" | "connected" | "disconnected">>({});
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let termObjs: Record<string, { term: any; ws: WebSocket; fit: any }> = {};
@@ -324,7 +340,7 @@
       XTerm = Terminal; FitAddonCls = FitAddon;
       await import("@xterm/xterm/css/xterm.css");
     }
-    const term = new XTerm({ fontFamily: '"Source Code Pro",ui-monospace,Menlo,monospace', fontSize: 13, theme: { background: "#080808" } });
+    const term = new XTerm({ fontFamily: '"Source Code Pro",ui-monospace,Menlo,monospace', fontSize, theme: { background: "#080808" } });
     const fit = new FitAddonCls();
     term.loadAddon(fit);
     term.open(el);
@@ -690,7 +706,7 @@
     return "◦";
   }
   onMount(() => {
-    loadSession().then(async () => { listFiles(); loadTrack(); await loadLayout(); if (termTabs.some((t) => t.id === runTab)) setTimeout(() => attachTerm(runTab), 0); const first = edTabs.find((t) => t.id === restoreEditorId) ?? edTabs[0]; if (first) await activateEditor(first.id); });
+    loadSession().then(async () => { loadAgentStatus(); listFiles(); loadTrack(); await loadLayout(); if (termTabs.some((t) => t.id === runTab)) setTimeout(() => attachTerm(runTab), 0); const first = edTabs.find((t) => t.id === restoreEditorId) ?? edTabs[0]; if (first) await activateEditor(first.id); });
     if (typeof window !== "undefined") window.addEventListener("resize", refitTerms);
     view = new EditorView({
       state: EditorState.create({ doc: PLACEHOLDER, extensions: [oneDark] }),
@@ -710,13 +726,15 @@
   });
 </script>
 
-<div class="win">
+<div class="win" style:--edfs="{fontSize + 1}px">
   <header class="hdr">
     <div class="l"><span class="logo">R</span><span class="title">{hasLesson ? "lesson" : "playground"} › {id.slice(0, 8)}</span></div>
     <div class="r">
       <span class="dot" style:background={pg?.status === "active" ? "#22c55e" : "#f59e0b"}></span>
+      {#if agent}<span class="agentchip" class:off={!agent.ready} title={agent.ready ? "Your coding agent has its model key. Run opencode in the terminal." : (agent.reason ?? "No model key installed. Ask your instructor for a class code.")}><i></i>{agent.ready ? `Agent ready${agent.model ? ` · ${agent.model.split("/").pop()}` : ""}` : "No agent key"}</span>{/if}
+      <span class="fontbtns" role="group" aria-label="text size"><button class="ibtn" aria-label="smaller text" onclick={() => bumpFont(-1)}>A−</button><button class="ibtn" aria-label="larger text" onclick={() => bumpFont(1)}>A+</button></span>
       <span class="timer" class:urgent={ttlUrgent} title={ttlUrgent ? "less than 15 minutes left — save your work" : "time remaining"}>{ttlText}</span>
-      <a class="ibtn" href="{API}/api/playgrounds/{id}/snapshot.tar" download title="download a tarball of your workspace">⛁ snapshot</a>
+      <a class="ibtn" href="{API}/api/playgrounds/{id}/snapshot.tar" download title="download a copy of your workspace files">⬇ Save my work</a>
       {#if confirmStop}
         <span class="confirm-inline">stop this playground? <button class="ibtn danger" onclick={() => fetch(`${API}/api/playgrounds/${id}`, { method: "DELETE" }).then(() => location.assign("/"))}>yes, stop</button> <button class="ibtn" onclick={() => (confirmStop = false)}>keep</button></span>
       {:else}
@@ -930,7 +948,7 @@
   .menu .confirm button{display:inline;padding:3px 8px;background:#eef2f7;margin-top:6px}
   .add{border:1px dashed #64748b;background:transparent;color:#334155;border-radius:99px;width:34px;height:34px;font-size:18px;cursor:pointer;flex:none}
   .dock{flex:1;display:grid;grid-template-columns:minmax(240px,26%) minmax(0,1fr) minmax(0,1.5fr);min-height:0}
-  .dock.noL{grid-template-columns:minmax(0,1fr) minmax(0,1.5fr)}.dock.noL.noR{grid-template-columns:minmax(0,1fr)}.dock.noR{grid-template-columns:minmax(240px,26%) minmax(0,1fr) 0}
+  .dock.noL{grid-template-columns:minmax(0,.8fr) minmax(0,1.7fr)}.dock.noL.noR{grid-template-columns:minmax(0,1fr)}.dock.noR{grid-template-columns:minmax(240px,26%) minmax(0,1fr) 0}
   .dock.noL .steps,.dock.noR .right{display:none}
   .colbar{display:flex;align-items:center;gap:6px;padding:6px 10px;font-size:11px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em}
   .colbar button{margin-left:auto;background:none;border:1px solid #475569;color:#cbd5e1;border-radius:6px;font-size:12px;cursor:pointer;padding:2px 8px}
@@ -966,6 +984,11 @@
   .edtab a{color:#93c5fd}
   .code{flex:1;overflow:auto}
   .code :global(.cm-editor){height:100%}
+  .code :global(.cm-editor .cm-scroller),.code :global(.cm-editor .cm-content){font-size:var(--edfs,14px)}
+  .agentchip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:3px 10px;border-radius:99px;background:#fff;color:#18252f;border:1px solid #c9d2db}
+  .agentchip i{width:8px;height:8px;border-radius:99px;background:#22c55e}
+  .agentchip.off i{background:#f59e0b}
+  .fontbtns{display:inline-flex}
   .diff{margin:0;padding:10px 12px;font-family:var(--mono);font-size:12px;background:#0f172a;color:#e2e8f0;max-height:180px;overflow:auto;white-space:pre-wrap}
   .right{background:#080808;display:flex;flex-direction:column;min-height:0;min-width:0}
   .rpane{flex:1;min-height:0;overflow:auto;display:none}

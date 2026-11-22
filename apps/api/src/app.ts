@@ -251,6 +251,25 @@ app.get("/api/playgrounds/:id", (c) => {
   return c.json(publicRec(rec as unknown as Record<string, unknown>));
 });
 
+// Is this workspace's coding agent ready to use? Reports only readiness and model name, never the key.
+app.get("/api/playgrounds/:id/agent-status", async (c) => {
+  const rec = getPlayground(c.req.param("id"));
+  if (!rec) return c.json({ error: "playground not found" }, 404);
+  try {
+    const r = await driver.run(
+      rec.id,
+      `[ -s "$HOME/.local/share/opencode/auth.json" ] && echo READY && cat "$HOME/.config/opencode/opencode.json" 2>/dev/null`,
+      { timeoutMs: 8_000 },
+    );
+    if (!r.stdout.startsWith("READY")) return c.json({ ready: false, reason: "no model key installed" });
+    let model: string | null = null;
+    try { model = JSON.parse(r.stdout.slice(5)).model ?? null; } catch { /* no config */ }
+    return c.json({ ready: true, model });
+  } catch {
+    return c.json({ ready: false, reason: "workspace not reachable" });
+  }
+});
+
 app.post("/api/playgrounds/:id/heartbeat", async (c) => {
   const rec = heartbeat(c.req.param("id"));
   if (!rec) return c.json({ error: "playground not found" }, 404);
@@ -465,6 +484,17 @@ app.all("/preview/:token/*", async (c) => {
 });
 
 // --- Tracks + in-session checks (issue #6) ---
+// Public, non-secret deployment settings the landing page adapts to.
+app.get("/api/config", (c) => {
+  const seatsRequired = process.env.SEATS_REQUIRED === "1";
+  return c.json({
+    seatsRequired,
+    className: process.env.CLASS_NAME || null,
+    // A live class has no prepared lessons by default; SHOW_LESSONS=1 brings them back.
+    showLessons: process.env.SHOW_LESSONS === "1" || !seatsRequired,
+  });
+});
+
 app.get("/api/tracks", async (c) => c.json({ tracks: await listTracks() }));
 
 app.get("/api/tracks/:slug", async (c) => {

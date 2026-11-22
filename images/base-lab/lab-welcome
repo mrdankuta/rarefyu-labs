@@ -1,0 +1,15 @@
+#!/bin/sh
+# Printed once per interactive terminal: tells a new student what to do next.
+# Never prints credentials; only whether a key is installed and which model is set.
+[ -n "$LAB_WELCOMED" ] && exit 0
+bold=$(printf '\033[1m'); dim=$(printf '\033[2m'); cyan=$(printf '\033[36m'); amber=$(printf '\033[33m'); off=$(printf '\033[0m')
+auth="$HOME/.local/share/opencode/auth.json"
+model=$(jq -r '.model // empty' "$HOME/.config/opencode/opencode.json" 2>/dev/null)
+printf '\n%sYour workspace is ready.%s\n' "$bold" "$off"
+if [ -s "$auth" ]; then
+  printf '  1. Run %sopencode%s to start your coding agent%s\n' "$cyan" "$off" "${model:+ ${dim}(model: ${model#*/})${off}}"
+else
+  printf '  1. %sNo model key is set up yet.%s Ask your instructor for a class code, or run %sopencode auth login%s.\n' "$amber" "$off" "$cyan" "$off"
+fi
+printf '  2. Your files live in %s~/workspace%s\n' "$cyan" "$off"
+printf '  3. Run an app on port 3000, then open the %sPreview%s tab\n\n' "$cyan" "$off"

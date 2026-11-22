@@ -142,7 +142,7 @@ export class LocalDriver implements ExecDriver {
     const home = await this.homeIfInjected(sessionId);
     const proc = Bun.spawn(["bash", "-c", cmd], {
       cwd: dir,
-      ...(home ? { env: { ...process.env, HOME: home } } : {}),
+      env: { ...process.env, ...(home ? { HOME: home } : {}) }, // live copy of the environment
       stdout: "pipe",
       stderr: "pipe",
     });

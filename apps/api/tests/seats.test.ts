@@ -21,6 +21,8 @@ beforeEach(() => {
   process.env.SEATS_FILE = join(dir, "seats.json");
   process.env.ADMIN_TOKEN = TOKEN;
   delete process.env.SEATS_REQUIRED;
+  delete process.env.CLASS_NAME;
+  delete process.env.SHOW_LESSONS;
   resetSeatsCache();
   clearPlaygrounds();
 });
@@ -71,6 +73,40 @@ describe("seat admin API", () => {
   test("rejects malformed input", async () => {
     expect((await post("/api/admin/seats", { seats: [] }, admin)).status).toBe(400);
     expect((await post("/api/admin/seats", { seats: [{ label: "x", key: "short" }] }, admin)).status).toBe(400);
+  });
+});
+
+describe("landing config and agent status", () => {
+  test("config reflects class mode and never leaks secrets", async () => {
+    let c = await (await app.request("/api/config")).json();
+    expect(c).toEqual({ seatsRequired: false, className: null, showLessons: true });
+    process.env.SEATS_REQUIRED = "1";
+    process.env.CLASS_NAME = "AI Build class";
+    c = await (await app.request("/api/config")).json();
+    expect(c).toEqual({ seatsRequired: true, className: "AI Build class", showLessons: false });
+    process.env.SHOW_LESSONS = "1";
+    expect((await (await app.request("/api/config")).json()).showLessons).toBe(true);
+    delete process.env.CLASS_NAME;
+    delete process.env.SHOW_LESSONS;
+  });
+
+  test("agent-status: ready with model for a seat workspace, not ready without a key, never shows the key", async () => {
+    const made = await (await post("/api/admin/seats", { seats: [{ label: "Ada", key: KEY }] }, admin)).json();
+    const seatPg = await (await post("/api/playgrounds", { seatCode: made.seats[0].code })).json();
+    const ready = await app.request(`/api/playgrounds/${seatPg.id}/agent-status`);
+    const text = await ready.text();
+    expect(JSON.parse(text)).toEqual({ ready: true, model: "opencode-go/kimi-k3" });
+    expect(text).not.toContain(KEY);
+    // The local stand-in driver shares the host HOME unless creds were injected; use an empty one here.
+    const realHome = process.env.HOME;
+    process.env.HOME = dir;
+    const anon = await (await post("/api/playgrounds", {})).json();
+    const none = await (await app.request(`/api/playgrounds/${anon.id}/agent-status`)).json();
+    process.env.HOME = realHome;
+    expect(none.ready).toBe(false);
+    expect((await app.request("/api/playgrounds/nope/agent-status")).status).toBe(404);
+    await driver.destroy(seatPg.id);
+    await driver.destroy(anon.id);
   });
 });
 
