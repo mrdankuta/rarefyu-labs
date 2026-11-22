@@ -930,7 +930,7 @@
   .menu .confirm button{display:inline;padding:3px 8px;background:#eef2f7;margin-top:6px}
   .add{border:1px dashed #64748b;background:transparent;color:#334155;border-radius:99px;width:34px;height:34px;font-size:18px;cursor:pointer;flex:none}
   .dock{flex:1;display:grid;grid-template-columns:minmax(240px,26%) minmax(0,1fr) minmax(0,1.5fr);min-height:0}
-  .dock.noL{grid-template-columns:0 minmax(0,1fr) minmax(0,1.5fr)}.dock.noR{grid-template-columns:minmax(240px,26%) minmax(0,1fr) 0}
+  .dock.noL{grid-template-columns:minmax(0,1fr) minmax(0,1.5fr)}.dock.noL.noR{grid-template-columns:minmax(0,1fr)}.dock.noR{grid-template-columns:minmax(240px,26%) minmax(0,1fr) 0}
   .dock.noL .steps,.dock.noR .right{display:none}
   .colbar{display:flex;align-items:center;gap:6px;padding:6px 10px;font-size:11px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em}
   .colbar button{margin-left:auto;background:none;border:1px solid #475569;color:#cbd5e1;border-radius:6px;font-size:12px;cursor:pointer;padding:2px 8px}
