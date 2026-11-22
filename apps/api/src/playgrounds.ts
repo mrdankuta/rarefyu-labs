@@ -128,11 +128,13 @@ export function createPlayground(opts: {
   mode?: "playground" | "guided";
   labId?: string;
   ttlMin?: number;
+  /** Ceiling for ttlMin; class seats lift it to a full class day. Defaults to MAX_TTL_MIN. */
+  maxTtlMin?: number;
   now?: number;
 }): PlaygroundRecord {
   const now = opts.now ?? Date.now();
   assertCapacity(opts.ownerKey);
-  const ttlMin = Math.min(Math.max(opts.ttlMin ?? DEFAULT_TTL_MIN, 1), MAX_TTL_MIN);
+  const ttlMin = Math.min(Math.max(opts.ttlMin ?? DEFAULT_TTL_MIN, 1), opts.maxTtlMin ?? MAX_TTL_MIN);
   const rec: PlaygroundRecord = {
     id: crypto.randomUUID(),
     courseId: "playground",

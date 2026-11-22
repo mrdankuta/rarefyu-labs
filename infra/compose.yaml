@@ -51,6 +51,7 @@ services:
       SNAPSHOT_DIR: /data/snapshots
       DATA_DIR: /data/seats
       SEATS_REQUIRED: ${SEATS_REQUIRED:-0}     # 1 = workspaces need a class code
+      SEAT_TTL_MIN: ${SEAT_TTL_MIN:-480}       # class-seat workspace lifetime (minutes)
       SEAT_DEFAULT_MODEL: ${SEAT_DEFAULT_MODEL:-opencode-go/kimi-k3}
       ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in .env (protects kill switch / reconcile)}
       PREVIEW_SECRET: ${PREVIEW_SECRET:?set PREVIEW_SECRET in .env}

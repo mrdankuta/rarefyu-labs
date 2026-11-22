@@ -93,6 +93,18 @@ describe("redeeming a class code", () => {
     await driver.destroy(pg.id);
   });
 
+  test("seat workspaces last a class day, not the 2h playground default", async () => {
+    const s = await seat();
+    const pg = await (await post("/api/playgrounds", { seatCode: s.code })).json();
+    const mins = (new Date(pg.expiresAt).getTime() - Date.now()) / 60_000;
+    expect(mins).toBeGreaterThan(470);
+    expect(mins).toBeLessThanOrEqual(480);
+    await driver.destroy(pg.id);
+    const anon = await (await post("/api/playgrounds", {})).json();
+    expect((new Date(anon.expiresAt).getTime() - Date.now()) / 60_000).toBeLessThanOrEqual(120);
+    await driver.destroy(anon.id);
+  });
+
   test("wrong code is rejected and throttled after repeated misses", async () => {
     const h = { "x-forwarded-for": "198.51.100.7" };
     for (let i = 0; i < 10; i++) expect((await post("/api/playgrounds", { seatCode: "AAAA-AAAA" }, h)).status).toBe(403);

@@ -195,7 +195,10 @@ app.post("/api/playgrounds", async (c) => {
       track: body.track !== undefined ? String(body.track) : undefined,
       mode,
       labId: body.labId ? String(body.labId) : undefined,
-      ttlMin: body.ttlMin ? Number(body.ttlMin) : undefined,
+      // Class seats live for a class day (SEAT_TTL_MIN, default 8h) instead of the 2h playground default.
+      ...(seat
+        ? { ttlMin: seatTtlMin(), maxTtlMin: seatTtlMin() }
+        : { ttlMin: body.ttlMin ? Number(body.ttlMin) : undefined }),
     });
     if (layout) rec.layout = layout;
   } catch (err) {
@@ -670,6 +673,11 @@ app.get("/api/playgrounds/:id/notices", (c) => {
 function adminOk(c: { req: { header: (h: string) => string | undefined } }) {
   const t = process.env.ADMIN_TOKEN;
   return !t || c.req.header("authorization") === `Bearer ${t}`;
+}
+
+function seatTtlMin() {
+  const n = Number(process.env.SEAT_TTL_MIN ?? 480);
+  return Number.isFinite(n) && n >= 1 ? n : 480;
 }
 
 // --- Class seats (admin only; ADMIN_TOKEN is mandatory because these hold model keys) ---
