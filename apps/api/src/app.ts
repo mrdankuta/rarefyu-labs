@@ -9,6 +9,7 @@ import {
   getPlayground,
   heartbeat,
   identityKey,
+  liveSessionForSeat,
   CAPACITY_RETRY_SEC,
   liveSessionFor,
   nukePlaygrounds,
@@ -18,6 +19,7 @@ import {
   sweepPlaygrounds,
   takeWoke,
 } from "./playgrounds";
+import { addSeats, credentialFiles, findSeatByCode, listSeats, removeSeat, seatGuessBlocked, type Seat } from "./seats";
 import { driver } from "./drivers";
 import { reconcile } from "./reconcile";
 import { auditEvent } from "./teach";
@@ -130,7 +132,7 @@ app.use("/api/playgrounds/:id/*", authz);
 // Anonymous playground loop — no auth (workspace-spec §5).
 // ownerKey never leaves the server: public() strips it from responses.
 function publicRec(rec: Record<string, unknown>) {
-  const { ownerKey: _dropped, ...pub } = rec;
+  const { ownerKey: _dropped, seatId: _seat, ...pub } = rec;
   return pub;
 }
 app.post("/api/playgrounds", async (c) => {
@@ -148,8 +150,31 @@ app.post("/api/playgrounds", async (c) => {
       return c.json({ error: (err as Error).message }, 404);
     }
   }
+  // Class code: identifies a seat (and its model key). Redeeming again resumes the seat's workspace.
+  let seat: Seat | undefined;
+  if (body.seatCode !== undefined && body.seatCode !== "") {
+    const ip = clientIp(c);
+    if (seatGuessBlocked(ip, false)) return c.json({ error: "too many wrong codes — wait a minute and try again" }, 429);
+    seat = findSeatByCode(String(body.seatCode));
+    if (!seat) {
+      seatGuessBlocked(ip, true);
+      return c.json({ error: "unknown class code — check it and try again" }, 403);
+    }
+    const live = liveSessionForSeat(seat.id);
+    if (live) {
+      // Reclaim: bind this browser to the seat's existing workspace (works from a new device too).
+      setCookie(c, "rfy_sid", cookieOfKey(live.ownerKey), { httpOnly: true, sameSite: "Lax", path: "/", maxAge: 86_400, secure: c.req.header("x-forwarded-proto") === "https" });
+      return c.json({ ...publicRec(live as unknown as Record<string, unknown>), resumed: true }, 200);
+    }
+  } else if (process.env.SEATS_REQUIRED === "1" && !who.userId) {
+    return c.json({ error: "a class code is required to start a workspace" }, 403);
+  }
   let { ownerKey } = who;
-  if (!who.userId && !who.cookie) {
+  if (seat) {
+    const sid = crypto.randomUUID();
+    setCookie(c, "rfy_sid", sid, { httpOnly: true, sameSite: "Lax", path: "/", maxAge: 86_400, secure: c.req.header("x-forwarded-proto") === "https" });
+    ownerKey = `seat:${seat.id}::${sid}`;
+  } else if (!who.userId && !who.cookie) {
     // First visit: issue the identity cookie that will own this anonymous workspace.
     const sid = crypto.randomUUID();
     setCookie(c, "rfy_sid", sid, {
@@ -166,6 +191,7 @@ app.post("/api/playgrounds", async (c) => {
     rec = createPlayground({
       ownerKey,
       userId: who.userId ?? undefined,
+      seatId: seat?.id,
       track: body.track !== undefined ? String(body.track) : undefined,
       mode,
       labId: body.labId ? String(body.labId) : undefined,
@@ -196,6 +222,7 @@ app.post("/api/playgrounds", async (c) => {
       noteProvisionErr();
       throw err;
     }
+    if (seat) await driver.injectCredentials(rec.id, credentialFiles(seat));
     noteProvisionOk();
     auditEvent(who.userId ? `user:${who.userId}` : "student", "create", rec.id, rec.mode);
   } catch (err) {
@@ -644,6 +671,45 @@ function adminOk(c: { req: { header: (h: string) => string | undefined } }) {
   const t = process.env.ADMIN_TOKEN;
   return !t || c.req.header("authorization") === `Bearer ${t}`;
 }
+
+// --- Class seats (admin only; ADMIN_TOKEN is mandatory because these hold model keys) ---
+function seatAdmin(c: { req: { header: (h: string) => string | undefined } }): { status: 401 | 503; error: string } | null {
+  if (!process.env.ADMIN_TOKEN) return { status: 503, error: "set ADMIN_TOKEN to manage class seats" };
+  return adminOk(c) ? null : { status: 401, error: "operator token required" };
+}
+app.post("/api/admin/seats", async (c) => {
+  const deny = seatAdmin(c);
+  if (deny) return c.json({ error: deny.error }, deny.status);
+  const body = await c.req.json().catch(() => ({}));
+  const items = Array.isArray(body.seats) ? body.seats : [];
+  if (!items.length || items.length > 500) return c.json({ error: "send {seats:[{label,key}]} with 1-500 entries" }, 400);
+  if (items.some((s: any) => typeof s?.key !== "string" || s.key.length < 8 || typeof s?.label !== "string" || !s.label.trim()))
+    return c.json({ error: "every seat needs a label and a key" }, 400);
+  const made = addSeats(items.map((s: any) => ({ label: s.label.trim(), key: s.key.trim() })));
+  auditEvent("operator", "seats-add", "-", String(made.length));
+  return c.json({ seats: made.map(({ id, code, label }) => ({ id, code, label })) }, 201);
+});
+app.get("/api/admin/seats", (c) => {
+  const deny = seatAdmin(c);
+  if (deny) return c.json({ error: deny.error }, deny.status);
+  return c.json({
+    seats: listSeats().map(({ id, code, label, createdAt }) => ({ id, code, label, createdAt, workspaceId: liveSessionForSeat(id)?.id ?? null })),
+  });
+});
+app.delete("/api/admin/seats/:id", async (c) => {
+  const deny = seatAdmin(c);
+  if (deny) return c.json({ error: deny.error }, deny.status);
+  const id = c.req.param("id");
+  if (!removeSeat(id)) return c.json({ error: "no such seat" }, 404);
+  // Revoking a seat also removes its workspace: the key lives in that workspace's home.
+  const live = liveSessionForSeat(id);
+  if (live) {
+    destroyPlayground(live.id);
+    await driver.destroy(live.id).catch(() => {});
+  }
+  auditEvent("operator", "seat-revoke", live?.id ?? "-");
+  return c.json({ ok: true });
+});
 
 // Kill switch: one-button nuke of every workspace; ?pause=1 also stops new creation.
 app.delete("/api/playgrounds", async (c) => {

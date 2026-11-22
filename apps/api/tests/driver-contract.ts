@@ -45,6 +45,27 @@ export function driverContract(name: string, make: () => ExecDriver, opts?: { sk
       expect(files.some((f) => f.path === "README.md")).toBe(true);
     });
 
+    t("injectCredentials writes private home files that survive in the workspace", async () => {
+      const id = sid("creds");
+      await d.create(id);
+      await d.injectCredentials(id, [{ path: ".config/probe/secret.json", content: '{"key":"sk-contract"}' }]);
+      const r = await d.run(id, 'cat "$HOME/.config/probe/secret.json"; stat -c %a "$HOME/.config/probe/secret.json"');
+      expect(r.stdout).toContain('{"key":"sk-contract"}');
+      expect(r.stdout.trim().endsWith("600")).toBe(true);
+      // visible from a real terminal too (same HOME as the learner's shell)
+      const term = await d.openTerminal(id, "t1");
+      term.write('echo HAS_$(test -f "$HOME/.config/probe/secret.json" && echo KEY)\n');
+      expect(await waitFor(() => term.scrollback(), "HAS_KEY")).toBe(true);
+      term.kill();
+    });
+
+    t("injectCredentials refuses paths that escape the home directory", async () => {
+      const id = sid("creds-bad");
+      await d.create(id);
+      for (const bad of ["../x", "/etc/passwd", "a/../../x", ""])
+        await expect(d.injectCredentials(id, [{ path: bad, content: "x" }])).rejects.toThrow();
+    });
+
     t("run captures stdout, stderr and exit code", async () => {
       const id = sid("run");
       await d.create(id);

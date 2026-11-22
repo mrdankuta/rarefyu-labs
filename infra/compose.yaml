@@ -43,11 +43,15 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /data/snapshots:/data/snapshots
+      - /data/seats:/data/seats               # class seats (model keys), 0600
     environment:
       API_PORT: "3000"
       DRIVER: ${DRIVER:-docker-gvisor}        # refuses to run workspaces without gVisor
       LAB_IMAGE: ${LAB_IMAGE:-rarefyu/base-lab:dev}
       SNAPSHOT_DIR: /data/snapshots
+      DATA_DIR: /data/seats
+      SEATS_REQUIRED: ${SEATS_REQUIRED:-0}     # 1 = workspaces need a class code
+      SEAT_DEFAULT_MODEL: ${SEAT_DEFAULT_MODEL:-opencode-go/kimi-k3}
       ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in .env (protects kill switch / reconcile)}
       PREVIEW_SECRET: ${PREVIEW_SECRET:?set PREVIEW_SECRET in .env}
       MAX_WORKSPACES_GLOBAL: ${MAX_WORKSPACES_GLOBAL:-20}

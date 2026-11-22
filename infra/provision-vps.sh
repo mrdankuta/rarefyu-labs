@@ -62,8 +62,9 @@ log "smoke test: container under gVisor"
 docker run --rm --runtime runsc alpine:3 uname -a | tee /dev/stderr | grep -qi "linux" || die "gVisor smoke test failed"
 
 # --- 4. data dirs + base image --------------------------------------------------
-mkdir -p /data/snapshots
-chown 1000:1000 /data/snapshots 2>/dev/null || true   # api container user
+mkdir -p /data/snapshots /data/seats
+chown 1000:1000 /data/snapshots /data/seats 2>/dev/null || true   # api container user
+chmod 700 /data/seats
 
 log "building base lab image ${IMAGE}"
 docker build -t "${IMAGE}" "${REPO_DIR}/images/base-lab"

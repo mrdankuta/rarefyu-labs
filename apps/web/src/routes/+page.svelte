@@ -9,8 +9,11 @@
   let current = $state<{ id: string; track?: string } | null>(null);
   let lessons = $state<Lesson[]>([]);
   let lessonsError = $state("");
+  let classCode = $state("");
+  const CODE_KEY = "rfy_class_code";
 
   onMount(async () => {
+    try { classCode = localStorage.getItem(CODE_KEY) ?? ""; } catch { /* storage blocked */ }
     // Reattach: if this browser already owns a live workspace, offer to resume it.
     try {
       const r = await fetch("/api/workspaces/current");
@@ -32,13 +35,17 @@
       const r = await fetch("/api/playgrounds", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(track ? { track } : {}),
+        body: JSON.stringify({ ...(track ? { track } : {}), ...(classCode.trim() ? { seatCode: classCode.trim() } : {}) }),
       });
       if (r.status === 503) {
         const b = await r.json().catch(() => ({}));
         if (b.code === "paused") { error = "New workspaces are paused right now. Please check back soon."; return; }
         const msg = (b.error ?? "we're at capacity right now") as string;
         error = `Sorry, ${msg}. Please try again in about ${b.retryAfterSec ?? 30} seconds.`;
+        return;
+      }
+      if (r.status === 403 && classCode.trim()) {
+        error = ((await r.json().catch(() => ({}))).error as string) ?? "That class code wasn't recognised.";
         return;
       }
       if (r.status === 429) {
@@ -49,6 +56,7 @@
       }
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const pg = await r.json();
+      try { if (classCode.trim()) localStorage.setItem(CODE_KEY, classCode.trim()); } catch { /* storage blocked */ }
       location.assign(`/lab/${pg.id}`);
     } catch (e) {
       error = `Couldn't start (${(e as Error).message}). Is the API up?`;
@@ -77,6 +85,9 @@
       <h2 id="pg-h">Playground</h2>
       <div class="card">
         <p>A blank workspace: terminal, editor and live preview, with your coding agents installed. No instructions, no checks — just build.</p>
+        <label class="code">Class code <span>(optional — gives your agent its model access)</span>
+          <input bind:value={classCode} placeholder="ABCD-EFGH" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="12" />
+        </label>
         <button class="cta" onclick={() => start()} disabled={starting !== null}>{starting === "playground" ? "starting…" : "▶ Open a playground"}</button>
       </div>
     </section>
@@ -130,4 +141,7 @@
   .facts{list-style:none;padding:0;margin:32px 0 0;display:grid;gap:10px;color:#334155}
   .facts li{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px}
   .foot{margin-top:32px;font-size:13px}.foot a{color:#475569}
+  .code{display:grid;gap:4px;font-size:13px;font-weight:600;margin:0 0 12px}
+  .code span{font-weight:400;color:#64748b}
+  .code input{max-width:200px;border:1px solid #cbd5e1;border-radius:6px;padding:8px 10px;font:inherit;font-family:ui-monospace,monospace;letter-spacing:.08em;text-transform:uppercase}
 </style>

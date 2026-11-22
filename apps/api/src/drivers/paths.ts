@@ -15,3 +15,9 @@ export function resolveInside(base: string, rel: string): string {
   if (full !== base && !full.startsWith(`${base}/`)) throw new Error("path escapes workspace");
   return full;
 }
+
+/** Home-relative path guard for credential files: no absolute paths, no "..", no empty parts. */
+export function assertHomeRel(path: string) {
+  if (!path || path.startsWith("/") || path.includes("\0") || path.split("/").some((p) => p === ".." || p === "" || p === "."))
+    throw new Error(`invalid home-relative path: ${path}`);
+}

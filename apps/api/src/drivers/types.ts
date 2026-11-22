@@ -46,6 +46,12 @@ export interface ExecDriver {
     stderr: string;
     exitCode: number;
   }>;
+  /**
+   * Write private files under the learner's home (paths relative to it, e.g.
+   * ".local/share/opencode/auth.json"). Contents never appear in argv; files are
+   * mode 0600 and persist with the workspace (survive hibernate/wake).
+   */
+  injectCredentials(sessionId: string, files: { path: string; content: string }[]): Promise<void>;
   /** Stream a workspace tarball (snapshot download). */
   snapshotTar(sessionId: string): Promise<ReadableStream<Uint8Array>>;
   /** File tree under workspace (relative paths, traversal-guarded). */

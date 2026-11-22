@@ -1,4 +1,4 @@
-import { resolveInside } from "./paths";
+import { assertHomeRel, resolveInside } from "./paths";
 import type { DriverCapabilities, ExecDriver, TerminalHandle, WorkspaceAddress } from "./types";
 
 const ROOT =
@@ -12,13 +12,13 @@ class Shell {
   subs = new Set<(d: string) => void>();
   decoder = new TextDecoder();
 
-  constructor(public workspaceDir: string) {
+  constructor(public workspaceDir: string, home?: string) {
     // Real PTY (Bun terminal): job control, Ctrl-C/Z, full-screen tools.
     // stdout/stderr are merged on the pty. The gVisor driver does the same
     // via sandboxd exec with a tty.
     this.proc = Bun.spawn(["bash", "--noprofile", "--norc", "-i"], {
       cwd: workspaceDir,
-      env: { ...process.env, TERM: "xterm-256color", PS1: "\\u@playground:\\w$ " },
+      env: { ...process.env, ...(home ? { HOME: home } : {}), TERM: "xterm-256color", PS1: "\\u@playground:\\w$ " },
       terminal: {
         cols: 80,
         rows: 24,
@@ -63,6 +63,28 @@ export class LocalDriver implements ExecDriver {
     return `${ROOT}/${sessionId}/workspace`;
   }
 
+  /** Per-session HOME, used only once credentials were injected (dev stand-in: no isolation). */
+  private home(sessionId: string) {
+    return `${ROOT}/${sessionId}/home`;
+  }
+  private async homeIfInjected(sessionId: string) {
+    const h = this.home(sessionId);
+    return (await Bun.file(`${h}/.injected`).exists()) ? h : undefined;
+  }
+
+  async injectCredentials(sessionId: string, files: { path: string; content: string }[]) {
+    await this.create(sessionId);
+    const home = this.home(sessionId);
+    for (const f of files) {
+      assertHomeRel(f.path);
+      const full = `${home}/${f.path}`;
+      await Bun.$`mkdir -p ${full.slice(0, full.lastIndexOf("/"))}`.quiet();
+      await Bun.write(full, f.content);
+      await Bun.$`chmod 600 ${full}`.quiet();
+    }
+    await Bun.write(`${home}/.injected`, "1");
+  }
+
   async create(sessionId: string) {
     const dir = this.dir(sessionId);
     await Bun.$`mkdir -p ${dir}`.quiet();
@@ -84,7 +106,7 @@ export class LocalDriver implements ExecDriver {
     let shell = this.shells.get(key);
     if (!shell) {
       await this.create(sessionId); // idempotent
-      shell = new Shell(this.dir(sessionId));
+      shell = new Shell(this.dir(sessionId), await this.homeIfInjected(sessionId));
       this.shells.set(key, shell);
     }
     const s = shell;
@@ -117,8 +139,10 @@ export class LocalDriver implements ExecDriver {
     const dir = this.dir(sessionId);
     await this.create(sessionId);
     const timeout = opts?.timeoutMs ?? 30_000;
+    const home = await this.homeIfInjected(sessionId);
     const proc = Bun.spawn(["bash", "-c", cmd], {
       cwd: dir,
+      ...(home ? { env: { ...process.env, HOME: home } } : {}),
       stdout: "pipe",
       stderr: "pipe",
     });

@@ -18,6 +18,8 @@ export interface PlaygroundRecord extends Session {
   ownerKey: string;
   /** Set when an authenticated user created the workspace; ownership is then by user id. */
   userId?: string;
+  /** Class seat this workspace belongs to (holds the model key); never sent to clients. */
+  seatId?: string;
   createdAt: string;
   lastSeenAt: string;
   warned: boolean;
@@ -111,9 +113,17 @@ function assertCapacity(ownerKey: string) {
     throw capErr("the platform is at capacity right now", 503, "at_capacity");
 }
 
+/** The seat's current workspace, if any (anything not destroyed or lost). */
+export function liveSessionForSeat(seatId: string): PlaygroundRecord | undefined {
+  for (const p of playgrounds.values())
+    if (p.seatId === seatId && p.status !== "destroyed" && !p.lostReason) return p;
+  return undefined;
+}
+
 export function createPlayground(opts: {
   ownerKey: string;
   userId?: string;
+  seatId?: string;
   track?: string;
   mode?: "playground" | "guided";
   labId?: string;
@@ -133,6 +143,7 @@ export function createPlayground(opts: {
     previewBase: "http://localhost:3000/preview/stub",
     mode: opts.mode ?? "playground",
     userId: opts.userId,
+    seatId: opts.seatId,
     track: opts.track,
     expiresAt: new Date(now + ttlMin * 60_000).toISOString(),
     ownerKey: opts.ownerKey,

@@ -1,4 +1,4 @@
-import { resolveInside } from "./paths";
+import { assertHomeRel, resolveInside } from "./paths";
 import type { DriverCapabilities, ExecDriver, Isolation, TerminalHandle, WorkspaceAddress } from "./types";
 
 const HOME = "/home/student";
@@ -325,6 +325,17 @@ export class DockerDriver implements ExecDriver {
     if (size > MAX) return { content: new TextDecoder().decode(bytes), truncated: true };
     if (bytes.includes(0)) throw new Error("binary file — preview not supported");
     return { content: new TextDecoder().decode(bytes), truncated: false };
+  }
+
+  async injectCredentials(sessionId: string, files: { path: string; content: string }[]) {
+    await this.ensureRunning(sessionId);
+    for (const f of files) {
+      assertHomeRel(f.path);
+      const r = await this.exec(sessionId, ["sh", "-c",
+        'umask 077 && mkdir -p "$(dirname "$HOME/$1")" && cat > "$HOME/$1"', "_", f.path,
+      ], { stdin: f.content, cwd: HOME });
+      if (r.exitCode !== 0) throw new Error(`cannot write credentials: ${r.stderr.trim() || "write failed"}`);
+    }
   }
 
   async writeFile(sessionId: string, path: string, content: string) {

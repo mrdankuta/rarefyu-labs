@@ -64,9 +64,26 @@ teach console).
 For production pin `LAB_IMAGE` by digest (`images/base-lab/push.sh` prints it)
 so a rebuilt image never changes under a running lab.
 
+## 3b. Class seats (model keys)
+
+Each student gets a seat: a class code mapped server-side to their own model key (e.g. an OpenCode Go key).
+Redeeming the code starts (or resumes) their workspace with the key already installed for `opencode`.
+
+```sh
+# students.csv: one `label,key` per line (# comments allowed)
+ADMIN_TOKEN=... API=https://labs.example.com bun scripts/seats.ts students.csv   # prints label,code — hand these out
+ADMIN_TOKEN=... API=https://labs.example.com bun scripts/seats.ts --list         # label,code,active|unused
+```
+
+- Keys live in `/data/seats/seats.json` (mode 0600, host dir mode 700, **plaintext** — treat the VPS disk and its backups as secret). Admin listings never return keys.
+- Revoke: `DELETE /api/admin/seats/:id` removes the seat *and* its workspace (the key sits in that workspace's home).
+- Set `SEATS_REQUIRED=1` once codes are out so nobody without one can start a workspace.
+- Wrong codes are throttled per IP (10/min). A class on one network is not limited by `MAX_WORKSPACES_PER_IP`; `MAX_WORKSPACES_GLOBAL` still applies.
+
 ## 4. Backup
 
 - `/data/snapshots`: expiry snapshots (kept 7 days, then purged).
+- `/data/seats/seats.json`: class seats and their keys. Losing it means re-running `scripts/seats.ts` (and re-handing out codes).
 - Postgres volume `pgdata`: `docker compose -f infra/compose.yaml exec postgres pg_dump -U labs labs > labs.sql`.
 - Student workspaces are ephemeral by design (2 h TTL); students download a snapshot before expiry.
 
