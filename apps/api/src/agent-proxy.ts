@@ -18,6 +18,7 @@
  */
 import { Hono } from "hono";
 import type { AgentServers, AgentTarget } from "./agent-server";
+import { createSseRedactor, redactJsonText } from "./agent-redact";
 
 export type Access = "ok" | "denied" | "missing";
 
@@ -69,7 +70,7 @@ export function upstreamHeaders(incoming: Headers, t: AgentTarget): Headers {
   return h;
 }
 
-function stream(res: Response): Response {
+async function stream(res: Response): Promise<Response> {
   const h = new Headers(res.headers);
   h.delete("set-cookie"); // upstream must never set cookies on our origin
   h.delete("content-encoding");
@@ -78,14 +79,27 @@ function stream(res: Response): Response {
     h.set("x-accel-buffering", "no");
   }
   let body: BodyInit | null = res.body;
+  // JSON (sessions, messages, errors): scrub provider-error detail before it reaches the browser (agent-redact.ts)
+  if (res.body && (h.get("content-type") ?? "").includes("application/json")) {
+    h.delete("content-length");
+    return new Response(redactJsonText(await res.text()), { status: res.status, statusText: res.statusText, headers: h });
+  }
   if (res.body && (h.get("content-type") ?? "").includes("text/event-stream")) {
+    const redact = createSseRedactor();
     // When the agent server dies mid-stream the upstream body errors. End OUR response cleanly instead of aborting
     // it: an abrupt close can be swallowed by an intermediate proxy (the dev proxy keeps the socket open), leaving the
     // browser's stream silently dead. A clean end makes the client reconnect, learn the server is gone and recover.
     const reader = res.body.getReader();
     body = new ReadableStream({
       async pull(c) {
-        try { const { done, value } = await reader.read(); if (done) c.close(); else c.enqueue(value); }
+        try {
+          for (;;) { // a partial frame produces nothing yet: keep reading until a whole frame can go out
+            const { done, value } = await reader.read();
+            if (done) { c.close(); return; }
+            const out = redact.push(value);
+            if (out) { c.enqueue(out); return; }
+          }
+        }
         catch { try { c.close(); } catch { /* already closed */ } }
       },
       cancel(reason) { return reader.cancel(reason).catch(() => {}); },
@@ -152,7 +166,7 @@ export function agentRoutes(deps: AgentRouteDeps) {
       init.duplex = "half";
     }
     try {
-      return stream(await fetch(`${t.origin}${path}${url.search}`, init));
+      return await stream(await fetch(`${t.origin}${path}${url.search}`, init));
     } catch {
       return c.json({ error: "agent server stopped responding", state: "unhealthy" }, 502);
     }

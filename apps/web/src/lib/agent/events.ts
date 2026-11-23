@@ -242,3 +242,9 @@ export function mergeSnapshot(snapshot: ChatState, old: ChatState): ChatState {
   }
   return st;
 }
+
+/** Model id of the newest assistant message that names one (`model: {id, providerID}` on 2.4.1). */
+export function modelOf(msgs: any[]): string | null {
+  for (let i = msgs.length - 1; i >= 0; i--) { const m = msgs[i]; if (m?.type === "assistant" && typeof m.model?.id === "string" && m.model.id) return m.model.id; }
+  return null;
+}

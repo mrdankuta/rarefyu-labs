@@ -49,3 +49,16 @@ describe("mapRequestError", () => {
   });
   test("non-API throw -> network", () => expect(mapRequestError(new TypeError("x"))).toBe(ERR.network));
 });
+
+describe("errors redacted by the API proxy still classify", () => {
+  test("402/401/429/500 and go-limit from type/status/message, body is a marker", async () => {
+    const { mapAgentError, ERR } = await import("./errors");
+    const mk = (o: object) => mapAgentError({ response: { body: "[redacted]" }, ...o } as any);
+    expect(mk({ status: 402 })).toBe(ERR.quota);
+    expect(mk({ status: 401 })).toBe(ERR.auth);
+    expect(mk({ status: 429, type: "provider.rate-limit" })).toBe(ERR.rate_limit);
+    expect(mk({ status: 500 })).toBe(ERR.model);
+    expect(mk({ type: "provider.go-limit", message: "Go usage limit reached, see [link removed]" })).toBe(ERR.quota);
+    expect(mapAgentError({ type: "provider.go-limit", status: 429, response: { body: "[redacted: Insufficient]" } } as any)).toBe(ERR.quota);
+  });
+});

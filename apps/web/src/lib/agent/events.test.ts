@@ -126,3 +126,11 @@ describe("stateFromMessages (history, oldest first)", () => {
     expect((st.messages[0] as any).parts[0].status).toBe("error");
   });
 });
+
+import { modelOf } from "./events";
+describe("modelOf", () => {
+  test("newest assistant message that names a model", () => {
+    expect(modelOf([{ type: "assistant", model: { id: "a", providerID: "p" } }, { type: "assistant", model: { id: "b" } }, { type: "idle" }])).toBe("b");
+    expect(modelOf([{ type: "user" }, { type: "assistant" }])).toBeNull();
+  });
+});

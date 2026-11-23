@@ -290,6 +290,7 @@ test.describe("absolute paths from the model", () => {
     await expect(changesTab(page)).not.toContainText("2");
     await expect(lbl(page).filter({ hasText: "Writing index.html" })).toHaveCount(1);
     await noHostPath(page);
+    await expect(page.locator(".agentchip")).toContainText("stub-1"); // the model the session actually used
     await page.waitForTimeout(6000); // past the lab's 5s poll: still one card
     await expect(page.locator("[data-testid=edit-card]")).toHaveCount(1);
   });

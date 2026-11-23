@@ -4,7 +4,7 @@
 // Resilience (#55): a dropped stream reconnects with backoff and re-syncs from history; a dead agent server is
 // restarted once automatically and then on request; every state maps to one plain-language status line (status.ts).
 import { createAgentClient, type AgentClient, type ConnState } from "./api";
-import { addPendingUser, adoptUserId, applyEvent, failPendingUser, mergeSnapshot, newChatState, pushError, stateFromMessages, type AgentEvent } from "./events";
+import { addPendingUser, adoptUserId, applyEvent, failPendingUser, mergeSnapshot, modelOf, newChatState, pushError, stateFromMessages, type AgentEvent } from "./events";
 import { AgentApiError, mapRequestError, type UiError } from "./errors";
 import { permissionFromPayload } from "./permissions";
 import { chatStatus, type AgentHealth } from "./status";
@@ -36,6 +36,8 @@ export class ChatController {
   /** The workspace root as the agent server reports it; paths in tool calls are made relative to it. Null = unknown. */
   root = $state<string[] | null>(null);
   loading = $state(false);
+  /** Model the active session actually used (from its latest assistant message), e.g. "deepseek-v4.1-flash-free". Null until known. */
+  model = $state<string | null>(null);
 
   /** The lab page's change tracking + editor (set by the page). Edit cards, editor refresh and save-before-send use it. */
   host: EditHost | null = null;
@@ -156,6 +158,7 @@ export class ChatController {
         if (this.sessionId !== id) return;
         const wasRunning = this.chat.running;
         if (!this.root) await this.loadRoot(); // an earlier attempt failed: try again now
+        this.model = modelOf(msgs) ?? this.model;
         const next = mergeSnapshot(stateFromMessages(msgs, active.has(id), this.rootsOf()), this.chat);
         next.permissions = perms.map((p) => permissionFromPayload(p)).filter((p): p is NonNullable<typeof p> => !!p);
         this.chat = next;
@@ -177,8 +180,15 @@ export class ChatController {
     const idx = this.turnIdx, snap = this.snap, host = this.host;
     this.snap = null;
     if (!host || !snap) return;
+    void this.refreshModel();
     await host.syncNow();
     this.turnChanged = { ...this.turnChanged, [idx]: changedSince(snap, host.versions()) };
+  }
+
+  private async refreshModel() {
+    const id = this.sessionId;
+    if (!id) return;
+    try { const m = modelOf(await this.client.listMessages(id)); if (m && this.sessionId === id) this.model = m; } catch { /* keep the seat model */ }
   }
 
   private onEvent(ev: AgentEvent) {
@@ -313,7 +323,7 @@ export class ChatController {
     const old = this.sessionId;
     this.sessionId = null;
     this.chat = newChatState(this.rootsOf());
-    this.turnChanged = {}; this.snap = null;
+    this.turnChanged = {}; this.snap = null; this.model = null;
     writeSessionId(this.workspaceId, null);
     if (old) { try { await this.client.interrupt(old); } catch { /* idle already */ } }
   }
