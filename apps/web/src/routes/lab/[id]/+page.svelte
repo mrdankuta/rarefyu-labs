@@ -241,7 +241,7 @@
     const { add, del } = statOf(d);
     const next = { ...changes };
     changeVer.set(path, ++verSeq);
-    if (base === cur || (add === 0 && del === 0)) { delete next[path]; editedByStudent.delete(path); }
+    if (base === cur) { delete next[path]; editedByStudent.delete(path); } // (a newline-only edit shows as +0 −0)
     else { next[path] = { status: cur === null ? "deleted" : base === null ? "added" : "modified", add, del }; resolutions.delete(path); }
     changes = next;
   }
@@ -268,6 +268,7 @@
       sigs.set(e.path, sig);
       const b = baseline.has(e.path) ? baseline.get(e.path) : initialPaths.has(e.path) ? undefined : null;
       if (b === undefined) continue; // existed before, no earlier copy: nothing to compare or restore
+      if (b === null) baseline.set(e.path, null); // (so a later delete of this file clears the entry below)
       changeVer.set(e.path, ++verSeq); resolutions.delete(e.path);
       changes = { ...changes, [e.path]: { status: b === null ? "added" : "modified", add: 0, del: 0, opaque: true } };
     }

@@ -7,7 +7,8 @@
  *   [[slow]]      stream words slowly (~150ms each, 60 words) so a turn can be interrupted
  *   [[tool]]      ask for a `write` tool call (hello.txt), then, after the tool result, a final text reply
  *   [[call:<tool> <json args>]]  (one or more) call that tool with those args, one call per model step, in order,
- *                 then a final text reply "Done with the edits." e.g. [[call:write {"filePath":"a.txt","content":"x\n"}]]
+ *                 then a final text reply "Done with the edits." e.g. [[call:write {"path":"a.txt","content":"x\n"}]]
+ *   [[wait:<ms>]] wait that long before the first reply byte of the turn
  *   [[401]] [[429]] [[500]]   respond with that HTTP status and a provider-style JSON error body
  * Every request is recorded in `requests` (authorization header + body) for assertions.
  */
@@ -19,6 +20,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function chunk(delta: object, finish: string | null = null, extra: object = {}) {
   return `data: ${JSON.stringify({ id: "chatcmpl-stub", object: "chat.completion.chunk", created: 1, model: "stub-1", choices: [{ index: 0, delta, finish_reason: finish }], ...extra })}\n\n`;
+}
+
+function toolsSinceUserEarly(msgs: any[]): number {
+  let n = 0;
+  for (let i = msgs.length - 1; i >= 0 && msgs[i].role !== "user"; i--) if (msgs[i].role === "tool") n++;
+  return n;
 }
 
 function lastUserText(messages: any[]): string {
@@ -56,6 +63,8 @@ export function startStub(port = 0): Promise<{ port: number; url: string; reques
       }
     }
 
+    const wait = /\[\[wait:(\d+)\]\]/.exec(text); // delay the first byte (lets a test act while the agent is "thinking")
+    if (wait && !afterTool && toolsSinceUserEarly(msgs) === 0) await sleep(Number(wait[1]));
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
     let closed = false;
     res.on("close", () => { closed = true; }); // opencode aborted (Stop)

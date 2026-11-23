@@ -4,9 +4,17 @@ export interface DiffStat { add: number; del: number }
 
 const MAX_LINES = 1500;
 
+/** Lines of a text: a final newline ends the last line, it does not start an empty one ("a\nb\n" is 2 lines). */
+export function splitLines(t: string): string[] {
+  if (t === "") return [];
+  const l = t.split("\n");
+  if (l.length > 1 && l[l.length - 1] === "") l.pop();
+  return l;
+}
+
 export function diffLines(a: string, b: string): DiffLine[] {
-  const A = a === "" ? [] : a.split("\n");
-  const B = b === "" ? [] : b.split("\n");
+  const A = splitLines(a);
+  const B = splitLines(b);
   if (A.length > MAX_LINES || B.length > MAX_LINES) {
     return [...A.map((s) => ({ t: "-" as const, s })), ...B.map((s) => ({ t: "+" as const, s }))];
   }
