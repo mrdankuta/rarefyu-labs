@@ -14,3 +14,7 @@ Checked end to end: class code login, workspace container `HostConfig.Runtime=ru
 Needs a bigger box for the class: 60 workspaces at 1 vCPU / 2 GB each do not fit on 1 vCPU / 1 GB. Size with the #46 load test.
 
 Gotcha fixed: the web runtime image ships only `apps/web`, so server-side imports of editor packages 500. The lab page is `ssr = false`.
+
+## Lab layout flag (Classic / Chat)
+
+The lab page has a header toggle between Classic and Chat. Chat is the default on a student's first visit; the choice is then remembered in the browser (`localStorage` key `rfy_layout`). To fall back to Classic for everyone mid-class (the toggle is hidden and any stored Chat choice is ignored), set `PUBLIC_DEFAULT_LAYOUT=classic` in `/opt/rarefyu-labs/.env` and run `docker compose --env-file .env -f infra/compose.yaml up -d web`. It is read at runtime by the web container, so no rebuild is needed. Unset it, or set anything else, to restore the toggle. Only the value `classic` has an effect.

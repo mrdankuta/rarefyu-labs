@@ -4,6 +4,8 @@
   import { onMount, onDestroy } from "svelte";
   import { collectDropped, collectInput, describe as describeUpload, downloadUrl, upload } from "$lib/transfer";
   import { currentTheme, toggleTheme, type Theme } from "$lib/theme";
+  import { env } from "$env/dynamic/public";
+  import { readStoredLayout, resolveLayout, storeLayout, forcedClassic, type ShellLayout } from "$lib/layout";
   import { diffLines, statOf, withContext, type DiffLine } from "$lib/diff";
   import { EditorState, Compartment } from "@codemirror/state";
   import { EditorView, keymap } from "@codemirror/view";
@@ -28,6 +30,25 @@
   // --- layout state ---
   let hideLearn = $state(false);
   let theme = $state<Theme>("dark");
+  // Shell layout (Classic | Chat): arrangement only. Every panel stays mounted in both, so terminals,
+  // editor state and previews keep running across a switch. PUBLIC_DEFAULT_LAYOUT=classic forces Classic.
+  const layoutForced = forcedClassic(env.PUBLIC_DEFAULT_LAYOUT);
+  let shell = $state<ShellLayout>(resolveLayout(readStoredLayout(), env.PUBLIC_DEFAULT_LAYOUT));
+  let drawer = $state<"files" | "terminal" | null>(null);
+  function setShell(l: ShellLayout) {
+    if (layoutForced || l === shell) return;
+    shell = l;
+    storeLayout(l);
+    drawer = null;
+    if (l === "chat") { centerView = "preview"; if (previewTab) checkBrowser(previewTab.id, true); }
+    // xterm can't measure while rearranged/hidden: refit (no reconnect) once the new layout has painted.
+    requestAnimationFrame(() => requestAnimationFrame(refitTerms));
+  }
+  function toggleDrawer(d: "files" | "terminal") {
+    drawer = drawer === d ? null : d;
+    if (drawer === "terminal") setTimeout(() => attachTerm(runTab), 0);
+    requestAnimationFrame(() => requestAnimationFrame(refitTerms));
+  }
   // Tab model (spec #30): terminals/browsers are data-driven; editors are file tabs.
   interface Tab { id: string; type: "terminal" | "browser" | "editor"; title: string; params: Record<string, string | number | boolean> }
   let tabs = $state<Tab[]>([{ id: "term-1", type: "terminal", title: "Terminal 1", params: {} }]);
@@ -299,7 +320,7 @@
   });
 
   // --- views, quick open, project search ---
-  let centerView = $state<"code" | "preview" | "changes">("code");
+  let centerView = $state<"code" | "preview" | "changes">(shell === "chat" ? "preview" : "code");
   let qo = $state<{ q: string; sel: number } | null>(null);
   function fuzzy(q: string, p: string): number {
     if (!q) return 1;
@@ -1042,6 +1063,7 @@
       <span class="crumb"><span class="mut">{hasLesson ? "Lesson" : "Playground"}</span><span class="sep">/</span><b>{id.slice(0, 8)}</b></span>
     </div>
     <div class="r">
+      {#if !layoutForced}<span class="layoutsw" role="group" aria-label="Layout"><span class="lbl">Layout</span><button class:on={shell === "classic"} aria-pressed={shell === "classic"} title="Classic: explorer, editor and terminal" onclick={() => setShell("classic")}>Classic</button><button class:on={shell === "chat"} aria-pressed={shell === "chat"} title="Chat: agent chat beside a large live preview" onclick={() => setShell("chat")}>Chat</button></span>{/if}
       {#if agent}<span class="agentchip" class:off={!agent.ready} title={agent.ready ? "Your coding agent has its model key. Run opencode in the terminal." : (agent.reason ?? "No model key installed. Ask your instructor for a class code.")}><i></i>{agent.ready ? `Agent ready${agent.model ? ` · ${agent.model.split("/").pop()}` : ""}` : "No agent key"}</span>{/if}
       <span class="timer" class:urgent={ttlUrgent} title={ttlUrgent ? "less than 15 minutes left, download your work" : "time remaining"}>{ttlText}</span>
       <span class="fontbtns" role="group" aria-label="text size"><button class="ibtn" aria-label="smaller text" onclick={() => bumpFont(-1)}>A−</button><button class="ibtn" aria-label="larger text" onclick={() => bumpFont(1)}>A+</button></span>
@@ -1059,7 +1081,7 @@
   <input type="file" multiple hidden bind:this={filePick} onchange={onPicked} aria-label="upload files" />
   <input type="file" hidden webkitdirectory bind:this={dirPick} onchange={onPicked} aria-label="upload folder" />
 
-  <div class="dock" class:learn={hasLesson && !hideLearn}>
+  <div class="dock" class:learn={hasLesson && !hideLearn} class:chat={shell === "chat"} class:dfiles={drawer === "files"} class:dterm={drawer === "terminal"}>
     {#if hasLesson && !hideLearn}
     <section class="steps card">
       <div class="colbar">Learn <button onclick={() => (hideLearn = true)}>⟨ hide</button></div>
@@ -1096,9 +1118,16 @@
     </section>
     {/if}
 
+    <section class="chatp card" aria-label="agent chat">
+      <div class="colbar">Agent chat</div>
+      <div class="chatbody"><div class="chatempty"><span class="spark">✨</span><b>Agent chat arrives here</b><span class="mut">Soon you will ask for changes in plain words and watch your site update next to this panel.</span></div></div>
+      <div class="chatin"><input disabled placeholder="Ask the agent to build something (coming soon)" aria-label="chat message (not available yet)" /><button disabled>Send</button></div>
+    </section>
+
     <aside class="files card" class:dragover={dragOver} aria-label="explorer"
       ondragover={(e) => { e.preventDefault(); dragOver = true; }} ondragleave={(e) => { if (e.currentTarget === e.target) dragOver = false; }} ondrop={onDrop}>
       <div class="fh">
+        <button class="dclose" aria-label="close files" onclick={() => (drawer = null)}>×</button>
         <button class="sv" class:on={sideView === "files"} onclick={() => (sideView = "files")}>Files</button>
         <button class="sv" class:on={sideView === "search"} onclick={() => { sideView = "search"; setTimeout(() => document.getElementById("proj-search")?.focus(), 0); }} title="search all files (Ctrl+Shift+F)">Search</button>
         <span class="sp"></span>
@@ -1161,6 +1190,7 @@
         <button role="tab" class="vt" class:on={centerView === "preview"} onclick={() => { centerView = "preview"; if (previewTab) checkBrowser(previewTab.id, true); }}>Preview</button>
         <button role="tab" class="vt" class:on={centerView === "changes"} onclick={() => (centerView = "changes")}>Changes{#if changeList.length}<span class="badge">{changeList.length}</span>{/if}</button>
         <span class="hint-k">Ctrl+P to open a file</span>
+        <span class="drawerbtns"><button class="vt" class:on={drawer === "files"} onclick={() => toggleDrawer("files")}>Files</button><button class="vt" class:on={drawer === "terminal"} onclick={() => toggleDrawer("terminal")}>Terminal</button></span>
       </div>
 
       <div class="pane" class:on={centerView === "code"}>
@@ -1253,6 +1283,7 @@
 
     <section class="right card">
       <div class="rtabs">
+        <button class="dclose" aria-label="close terminal" onclick={() => (drawer = null)}>×</button>
         {#each runTabs as t (t.id)}
           <span class="tabwrap" role="presentation" draggable="true" ondragstart={() => (dragId = t.id)} ondragover={(e) => e.preventDefault()} ondrop={() => dropOn(t.id)}>
             {#if renaming === t.id}
@@ -1536,5 +1567,43 @@
     .dock,.dock.learn{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1fr)}
     .files{display:none}
     .hdr .r .ibtn:not(.danger):not(:nth-last-child(-n+3)){display:none}
+  }
+
+  /* layout switch + Chat shell. Classic rules above are untouched; everything below is scoped to .dock.chat
+     (or hidden by default), and the same live panels are only re-arranged, never unmounted. */
+  .layoutsw{display:inline-flex;align-items:center;gap:2px;height:32px;padding:2px;border:1px solid var(--border);border-radius:9px;background:var(--surface2);flex:none}
+  .layoutsw .lbl{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:0 8px 0 8px}
+  .layoutsw button{height:26px;padding:0 12px;border:0;border-radius:7px;background:none;color:var(--muted);font:600 13px var(--sans);cursor:pointer}
+  .layoutsw button.on{background:var(--accent);color:var(--accent-ink)}
+  .layoutsw button:not(.on):hover{color:var(--text)}
+  .chatp,.drawerbtns,.dclose{display:none}
+  .dock.chat{position:relative;overflow:hidden;grid-template-columns:minmax(280px,30%) minmax(0,1fr)}
+  .dock.chat.learn{grid-template-columns:minmax(220px,20%) minmax(260px,28%) minmax(0,1fr)}
+  .dock.chat .chatp{display:flex}
+  .dock.chat .hint-k{display:none}
+  .dock.chat .drawerbtns{display:flex;margin-left:auto;padding-right:6px;gap:2px}
+  .dock.chat .dclose{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);font-size:16px;cursor:pointer;flex:none}
+  .dock.chat .fh .dclose{order:9;margin-left:4px}
+  .dock.chat .rtabs .dclose{order:9;margin-left:auto;color:#93a0b4;border-color:#12303d}
+  /* drawers stay laid out (so xterm can measure) but are hidden until opened */
+  .dock.chat .files,.dock.chat .right{position:absolute;top:12px;bottom:12px;right:12px;z-index:5;box-shadow:0 12px 40px rgba(0,0,0,.35);visibility:hidden;opacity:0;transform:translateX(24px);pointer-events:none;transition:opacity .15s,transform .15s,visibility 0s .15s}
+  .dock.chat .files{width:min(320px,calc(100% - 24px))}
+  .dock.chat .right{width:min(640px,calc(100% - 24px))}
+  .dock.chat.dfiles .files,.dock.chat.dterm .right{visibility:visible;opacity:1;transform:none;pointer-events:auto;transition:opacity .15s,transform .15s}
+  .chatbody{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center}
+  .chatempty{display:flex;flex-direction:column;gap:8px;align-items:center;max-width:300px;font-size:13.5px;line-height:1.5}
+  .chatempty b{font-size:16px}.chatempty .spark{font-size:28px;color:var(--accent)}
+  .chatin{display:flex;gap:8px;padding:12px;border-top:1px solid var(--border);flex:none}
+  .chatin input{flex:1;min-width:0;height:38px;padding:0 12px;border-radius:9px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font:13.5px var(--sans)}
+  .chatin button{height:38px;padding:0 16px;border:0;border-radius:9px;background:var(--accent);color:var(--accent-ink);font:600 13.5px var(--sans)}
+  .chatin input:disabled,.chatin button:disabled{opacity:.5;cursor:not-allowed}
+  @media (max-width:1200px){
+    .layoutsw .lbl{display:none}
+    .dock.chat,.dock.chat.learn{grid-template-columns:minmax(240px,34%) minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
+    .dock.chat .right{grid-column:auto}
+  }
+  @media (max-width:760px){
+    .dock.chat,.dock.chat.learn{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,.7fr) minmax(0,1.3fr)}
+    .dock.chat .files,.dock.chat .right{display:flex;left:12px;width:auto}
   }
 </style>
