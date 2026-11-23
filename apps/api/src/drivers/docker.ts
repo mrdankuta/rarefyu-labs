@@ -1,6 +1,7 @@
 import { walkArgs, parseWalk } from "./walk";
 import { frameFiles, parseTransferResult, type ImportInput, type TransferResult } from "../transfer";
 import { assertHomeRel, resolveInside } from "./paths";
+import { agentServerConfigJson } from "../agent-policy";
 import type { DriverCapabilities, ExecDriver, Isolation, TerminalHandle, WorkspaceAddress } from "./types";
 
 const HOME = "/home/student";
@@ -290,6 +291,7 @@ export class DockerDriver implements ExecDriver {
     const r = await this.exec(sessionId, ["sh", "-c",
       `if ${AGENT_ALIVE}; then exit 0; fi
        IFS= read -r OPENCODE_SERVER_PASSWORD; export OPENCODE_SERVER_PASSWORD
+       OPENCODE_CONFIG_CONTENT='${agentServerConfigJson()}'; export OPENCODE_CONFIG_CONTENT
        setsid nohup opencode serve --hostname 0.0.0.0 --port ${AGENT_PORT} >/tmp/agent-server.log 2>&1 </dev/null &
        echo $! > ${AGENT_PID}`,
     ], { stdin: `${password}\n`, timeoutMs: 20_000 });

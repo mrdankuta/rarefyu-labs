@@ -27,6 +27,8 @@ export interface AgentRouteDeps {
   access(headers: Headers, id: string): Promise<Access>;
   /** Does this workspace have a class seat (model key)? Reported in the status so the chat can warn when not. */
   keyed?(id: string): boolean;
+  /** Test-only (E2E_TEST_HOOKS=1): lets a browser test crash the workspace's agent server. Never set in production. */
+  testHooks?: boolean;
 }
 
 const HOP = ["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "host", "content-length"];
@@ -75,7 +77,21 @@ function stream(res: Response): Response {
     h.set("cache-control", "no-cache, no-transform");
     h.set("x-accel-buffering", "no");
   }
-  return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
+  let body: BodyInit | null = res.body;
+  if (res.body && (h.get("content-type") ?? "").includes("text/event-stream")) {
+    // When the agent server dies mid-stream the upstream body errors. End OUR response cleanly instead of aborting
+    // it: an abrupt close can be swallowed by an intermediate proxy (the dev proxy keeps the socket open), leaving the
+    // browser's stream silently dead. A clean end makes the client reconnect, learn the server is gone and recover.
+    const reader = res.body.getReader();
+    body = new ReadableStream({
+      async pull(c) {
+        try { const { done, value } = await reader.read(); if (done) c.close(); else c.enqueue(value); }
+        catch { try { c.close(); } catch { /* already closed */ } }
+      },
+      cancel(reason) { return reader.cancel(reason).catch(() => {}); },
+    });
+  }
+  return new Response(body, { status: res.status, statusText: res.statusText, headers: h });
 }
 
 export function agentRoutes(deps: AgentRouteDeps) {
@@ -104,6 +120,16 @@ export function agentRoutes(deps: AgentRouteDeps) {
       return c.json({ error: (err as Error).message, state: "unhealthy" }, 503);
     }
   });
+
+  if (deps.testHooks) {
+    // Simulates a crash / hibernate for the resilience e2e: the server process is killed, nothing else changes.
+    r.post("/api/playgrounds/:id/agent/_test/kill", async (c) => {
+      const denied = await gate(c);
+      if (denied) return denied;
+      await deps.servers.crash(c.req.param("id"));
+      return c.json({ ok: true });
+    });
+  }
 
   r.all("/api/playgrounds/:id/agent/*", async (c) => {
     const denied = await gate(c);

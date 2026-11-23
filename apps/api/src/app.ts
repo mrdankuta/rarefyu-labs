@@ -777,7 +777,7 @@ app.get("/api/playgrounds/:id/agent/audit", (c) => {
 });
 
 // --- Agent server (issue #50): start/status + authenticated reverse proxy (see agent-proxy.ts) ---
-app.route("/", agentRoutes({ servers: agentServers, access: agentAccess, keyed: (id) => !!getPlayground(id)?.seatId }));
+app.route("/", agentRoutes({ servers: agentServers, access: agentAccess, keyed: (id) => !!getPlayground(id)?.seatId, testHooks: process.env.E2E_TEST_HOOKS === "1" }));
 
 // --- Isolated grading (issue #10): submit → grade in fresh env, immutable ---
 app.post("/api/playgrounds/:id/grade", async (c) => {

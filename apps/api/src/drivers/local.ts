@@ -1,6 +1,7 @@
 import { walkArgs, parseWalk } from "./walk";
 import { frameFiles, parseTransferResult, type ImportInput, type TransferResult } from "../transfer";
 import { assertHomeRel, resolveInside } from "./paths";
+import { agentServerConfigJson } from "../agent-policy";
 import type { DriverCapabilities, ExecDriver, TerminalHandle, WorkspaceAddress } from "./types";
 
 const ROOT =
@@ -249,7 +250,8 @@ export class LocalDriver implements ExecDriver {
     const home = (await this.homeIfInjected(sessionId)) ?? this.home(sessionId);
     await Bun.$`mkdir -p ${home}`.quiet();
     const env: Record<string, string | undefined> = { ...process.env, HOME: home, OPENCODE_SERVER_PASSWORD: password };
-    for (const k of Object.keys(env)) if (k.startsWith("XDG_") || (k.startsWith("OPENCODE_") && k !== "OPENCODE_SERVER_PASSWORD")) delete env[k];
+    for (const k of Object.keys(env)) if (k.startsWith("XDG_") || (k.startsWith("OPENCODE_") && k !== "OPENCODE_SERVER_PASSWORD" && k !== "OPENCODE_CONFIG_CONTENT")) delete env[k];
+    env.OPENCODE_CONFIG_CONTENT = agentServerConfigJson(); // workspace policy: see agent-policy.ts
     const proc = Bun.spawn([...this.opencode, "serve", "--hostname", "127.0.0.1", "--port", String(port)], {
       cwd: this.dir(sessionId),
       env,

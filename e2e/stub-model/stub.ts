@@ -6,6 +6,10 @@
  *   (none)        stream a normal text reply ("Hello from the stub model. ...")
  *   [[slow]]      stream words slowly (~150ms each, 60 words) so a turn can be interrupted
  *   [[tool]]      ask for a `write` tool call (hello.txt), then, after the tool result, a final text reply
+ *   [[outside]]   ask for a `write` OUTSIDE the workspace (/tmp/rfy-outside-stub.txt), then a final text reply
+ *   [[bash]]      ask for a `bash` call (`echo stub-bash-ok`), then a final text reply
+ *   [[longout]]   ask for a `bash` call printing 120 lines, then a final text reply
+ *   [[longerr]]   ask for a `bash` call that prints 80 lines to stderr and exits 1, then a final text reply
  *   [[401]] [[429]] [[500]]   respond with that HTTP status and a provider-style JSON error body
  * Every request is recorded in `requests` (authorization header + body) for assertions.
  */
@@ -27,6 +31,15 @@ function lastUserText(messages: any[]): string {
     if (Array.isArray(m.content)) return m.content.map((p: any) => p.text ?? "").join(" ");
   }
   return "";
+}
+
+function toolFor(text: string): { name: string; args: object } | null {
+  if (text.includes("[[tool]]")) return { name: "write", args: { path: "hello.txt", content: "hello from the stub\n" } };
+  if (text.includes("[[outside]]")) return { name: "write", args: { path: "/tmp/rfy-outside-stub.txt", content: "outside\n" } };
+  if (text.includes("[[bash]]")) return { name: "shell", args: { command: "echo stub-bash-ok", description: "Echo" } };
+  if (text.includes("[[longout]]")) return { name: "shell", args: { command: "seq 1 120", description: "Count" } };
+  if (text.includes("[[longerr]]")) return { name: "shell", args: { command: "for i in $(seq 1 80); do echo \"stub error line $i\" >&2; done; exit 1", description: "Fail" } };
+  return null;
 }
 
 export function startStub(port = 0): Promise<{ port: number; url: string; requests: StubRequest[]; stop: () => Promise<void> }> {
@@ -59,17 +72,17 @@ export function startStub(port = 0): Promise<{ port: number; url: string; reques
     res.on("close", () => { closed = true; }); // opencode aborted (Stop)
     const send = (s: string) => { if (!closed) res.write(s); };
     send(chunk({ role: "assistant", content: "" }));
-    if (text.includes("[[tool]]") && !afterTool) {
-      send(chunk({ tool_calls: [{ index: 0, id: "call_stub1", type: "function", function: { name: "write", arguments: "" } }] }));
-      const args = JSON.stringify({ path: "hello.txt", content: "hello from the stub\n" });
-      send(chunk({ tool_calls: [{ index: 0, function: { arguments: args } }] }));
+    const call = !afterTool ? toolFor(text) : null;
+    if (call) {
+      send(chunk({ tool_calls: [{ index: 0, id: "call_stub1", type: "function", function: { name: call.name, arguments: "" } }] }));
+      send(chunk({ tool_calls: [{ index: 0, function: { arguments: JSON.stringify(call.args) } }] }));
       send(chunk({}, "tool_calls", { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } }));
     } else if (text.includes("[[slow]]")) {
       for (let i = 0; i < 60 && !closed; i++) { await sleep(150); send(chunk({ content: `word${i} ` })); }
       send(chunk({}, "stop", { usage: { prompt_tokens: 10, completion_tokens: 60, total_tokens: 70 } }));
     } else {
       const reply = afterTool
-        ? "I created hello.txt for you."
+        ? (text.includes("[[tool]]") ? "I created hello.txt for you." : "All done with the tool step.")
         : "Hello from the stub model. Here is **bold** text and a code block:\n\n```js\nconsole.log('hi')\n```\n";
       for (const w of reply.match(/\S+\s*/g) ?? []) { send(chunk({ content: w })); await sleep(20); }
       send(chunk({}, "stop", { usage: { prompt_tokens: 10, completion_tokens: 12, total_tokens: 22 } }));

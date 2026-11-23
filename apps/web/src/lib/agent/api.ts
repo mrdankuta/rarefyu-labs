@@ -20,6 +20,8 @@ export const PATHS = {
   interrupt: (id: string) => `/api/session/${encodeURIComponent(id)}/interrupt`,
   messages: (id: string) => `/api/session/${encodeURIComponent(id)}/message`,
   active: "/api/session/active",
+  permissions: (id: string) => `/api/session/${encodeURIComponent(id)}/permission`,
+  permissionReply: (id: string, req: string) => `/api/session/${encodeURIComponent(id)}/permission/${encodeURIComponent(req)}/reply`,
   events: "/api/event",
 } as const;
 
@@ -38,8 +40,16 @@ export interface AgentClient {
   listMessages(sessionId: string): Promise<any[]>;
   /** Session ids with a turn running right now. */
   activeSessionIds(): Promise<Set<string>>;
-  /** Subscribe to the server-wide event stream; reconnects with backoff. Returns an unsubscribe function. */
-  subscribe(h: { onEvent(e: AgentEvent): void; onState(s: ConnState): void; onReconnect(): void }): () => void;
+  /** Permission requests the agent is waiting on for this session (empty when none). */
+  listPermissions(sessionId: string): Promise<any[]>;
+  /** Answer a permission request: once = allow this time, reject = deny. */
+  replyPermission(sessionId: string, requestId: string, decision: "once" | "reject"): Promise<void>;
+  /**
+   * Subscribe to the server-wide event stream; reconnects with backoff. Returns an unsubscribe function
+   * (with `.nudge()` to cut the current backoff wait, e.g. right after the agent was restarted).
+   * `onFail` runs for every failed connection attempt, with the HTTP status (0 = network).
+   */
+  subscribe(h: { onEvent(e: AgentEvent): void; onState(s: ConnState): void; onReconnect(): void; onFail?(status: number): void }): (() => void) & { nudge(): void };
 }
 
 /** Incremental SSE parser: feed text chunks, get complete `data:` payloads (comments/heartbeats are skipped). */
@@ -99,8 +109,11 @@ export function createAgentClient(opts: { base: string; fetch?: typeof fetch }):
       const r = await call<{ data: Record<string, { type: string }> }>(PATHS.active);
       return new Set(Object.entries(r.data ?? {}).filter(([, v]) => v?.type === "running").map(([k]) => k));
     },
+    async listPermissions(sessionId) { return (await call<{ data: any[] }>(PATHS.permissions(sessionId))).data ?? []; },
+    async replyPermission(sessionId, requestId, decision) { await call(PATHS.permissionReply(sessionId, requestId), json("POST", { decision })); },
     subscribe(h) {
       let stopped = false;
+      let wake: (() => void) | null = null;
       let ctl: AbortController | null = null;
       let attempt = 0;
       let first = true;
@@ -128,16 +141,21 @@ export function createAgentClient(opts: { base: string; fetch?: typeof fetch }):
               arm();
               parse(dec.decode(value, { stream: true }));
             }
-          } catch { /* dropped or aborted: reconnect below */ }
+          } catch (e) {
+            // dropped or aborted: reconnect below. A refused/aborted fetch has no status (0).
+            h.onFail?.(e instanceof AgentApiError ? e.status : 0);
+          }
           clearTimeout(watchdog);
           if (stopped) return;
           h.onState("reconnecting");
           first = false;
-          await new Promise((r) => setTimeout(r, Math.min(8000, 400 * 2 ** attempt++)));
+          // exponential backoff, capped; `nudge()` ends the wait early
+          await new Promise<void>((r) => { const t = setTimeout(r, Math.min(8000, 400 * 2 ** attempt++)); wake = () => { clearTimeout(t); r(); }; });
+          wake = null;
         }
       }
       void run();
-      return () => { stopped = true; ctl?.abort(); };
+      return Object.assign(() => { stopped = true; ctl?.abort(); wake?.(); }, { nudge: () => { attempt = 0; wake?.(); } });
     },
   };
 }
