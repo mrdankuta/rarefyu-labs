@@ -9,6 +9,7 @@
  *   [[call:<tool> <json args>]]  (one or more) call that tool with those args, one call per model step, in order,
  *                 then a final text reply "Done with the edits." e.g. [[call:write {"path":"a.txt","content":"x\n"}]]
  *   [[wait:<ms>]] wait that long before the first reply byte of the turn
+ *   [[site:TEXT]] ask for a `write` tool call that writes index.html (`<h1 id="t">TEXT</h1>` plus a tall spacer), then a final text reply
  *   [[401]] [[429]] [[500]]   respond with that HTTP status and a provider-style JSON error body
  * Every request is recorded in `requests` (authorization header + body) for assertions.
  */
@@ -70,6 +71,7 @@ export function startStub(port = 0): Promise<{ port: number; url: string; reques
     res.on("close", () => { closed = true; }); // opencode aborted (Stop)
     const send = (s: string) => { if (!closed) res.write(s); };
     send(chunk({ role: "assistant", content: "" }));
+    const site = /\[\[site:([^\]]*)\]\]/.exec(text);
     const calls = [...text.matchAll(/\[\[call:(\w+) (\{.*?\})\]\]/g)].map((m) => ({ name: m[1]!, args: m[2]! }));
     let toolsSinceUser = 0;
     for (let i = msgs.length - 1; i >= 0 && msgs[i].role !== "user"; i--) if (msgs[i].role === "tool") toolsSinceUser++;
@@ -81,6 +83,11 @@ export function startStub(port = 0): Promise<{ port: number; url: string; reques
     } else if (calls.length) {
       for (const w of "Done with the edits.".match(/\S+\s*/g) ?? []) { send(chunk({ content: w })); await sleep(20); }
       send(chunk({}, "stop", { usage: { prompt_tokens: 10, completion_tokens: 12, total_tokens: 22 } }));
+    } else if (site && !afterTool) {
+      send(chunk({ tool_calls: [{ index: 0, id: "call_site1", type: "function", function: { name: "write", arguments: "" } }] }));
+      const html = `<!doctype html><html><body><h1 id="t">${site[1]}</h1><div style="height:3000px"></div><p id="end">bottom</p></body></html>\n`;
+      send(chunk({ tool_calls: [{ index: 0, function: { arguments: JSON.stringify({ path: "index.html", content: html }) } }] }));
+      send(chunk({}, "tool_calls", { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } }));
     } else if (text.includes("[[tool]]") && !afterTool) {
       send(chunk({ tool_calls: [{ index: 0, id: "call_stub1", type: "function", function: { name: "write", arguments: "" } }] }));
       const args = JSON.stringify({ path: "hello.txt", content: "hello from the stub\n" });
@@ -91,7 +98,7 @@ export function startStub(port = 0): Promise<{ port: number; url: string; reques
       send(chunk({}, "stop", { usage: { prompt_tokens: 10, completion_tokens: 60, total_tokens: 70 } }));
     } else {
       const reply = afterTool
-        ? "I created hello.txt for you."
+        ? (/\[\[site:/.test(text) ? "I updated index.html for you." : "I created hello.txt for you.")
         : "Hello from the stub model. Here is **bold** text and a code block:\n\n```js\nconsole.log('hi')\n```\n";
       for (const w of reply.match(/\S+\s*/g) ?? []) { send(chunk({ content: w })); await sleep(20); }
       send(chunk({}, "stop", { usage: { prompt_tokens: 10, completion_tokens: 12, total_tokens: 22 } }));

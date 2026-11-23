@@ -21,6 +21,10 @@ export interface WorkspaceAddress {
   port: number;
 }
 
+export interface CreateOpts {
+  seedFiles?: { path: string; content: string }[];
+}
+
 export interface TerminalHandle {
   termId: string;
   /** Write user input (keystrokes) to the shell. */
@@ -36,8 +40,14 @@ export interface ExecDriver {
   readonly backend: "docker-gvisor" | "docker" | "local";
   /** What this backend guarantees; callers refuse weak isolation in production. */
   capabilities(): DriverCapabilities;
-  /** Provision workspace + first shell for a playground id. */
-  create(sessionId: string): Promise<{ workspaceDir: string }>;
+  /**
+   * Provision workspace + first shell for a playground id. `seedFiles` (workspace-relative) are written
+   * only when absent and BEFORE the starter snapshot, so they are part of the baseline (diff/reset treat
+   * them as untouched). Ignored when the workspace already exists.
+   */
+  create(sessionId: string, opts?: CreateOpts): Promise<{ workspaceDir: string }>;
+  /** The port the Preview panel expects the student's web app on (Docker: always 3000; local: a free port per workspace, since local workspaces share the host network). */
+  previewPort(sessionId: string): Promise<number>;
   /** Open (or reattach to) a named terminal in the session. */
   openTerminal(sessionId: string, termId: string): Promise<TerminalHandle>;
   /** Kill a named terminal's shell if it exists. Idempotent; never creates one. */

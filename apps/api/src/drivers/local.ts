@@ -1,7 +1,7 @@
 import { walkArgs, parseWalk } from "./walk";
 import { frameFiles, parseTransferResult, type ImportInput, type TransferResult } from "../transfer";
 import { assertHomeRel, resolveInside } from "./paths";
-import type { DriverCapabilities, ExecDriver, TerminalHandle, WorkspaceAddress } from "./types";
+import type { CreateOpts, DriverCapabilities, ExecDriver, TerminalHandle, WorkspaceAddress } from "./types";
 
 const ROOT =
   process.env.PLAYGROUND_ROOT ?? "/tmp/labs-playgrounds";
@@ -64,6 +64,7 @@ export class LocalDriver implements ExecDriver {
   readonly backend = "local" as const;
   private shells = new Map<string, Shell>(); // `${sessionId}/${termId}`
   private servicePorts = new Map<string, number>();
+  private previewPorts = new Map<string, number>();
   private agents = new Map<string, { proc: ReturnType<typeof Bun.spawn>; port: number }>();
   /** argv prefix for the OpenCode binary (OPENCODE_BIN overrides; tests point it at a stub). */
   private opencode: string[];
@@ -100,7 +101,22 @@ export class LocalDriver implements ExecDriver {
     await Bun.write(`${home}/.injected`, "1");
   }
 
-  async create(sessionId: string) {
+  async previewPort(sessionId: string): Promise<number> {
+    const known = this.previewPorts.get(sessionId);
+    if (known) return known;
+    const file = `${ROOT}/${sessionId}/preview-port`;
+    const saved = Number((await Bun.file(file).exists()) ? await Bun.file(file).text() : 0);
+    if (Number.isInteger(saved) && saved > 0) { this.previewPorts.set(sessionId, saved); return saved; }
+    const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const p: number = probe.port;
+    probe.stop(true);
+    await Bun.$`mkdir -p ${ROOT}/${sessionId}`.quiet();
+    await Bun.write(file, String(p));
+    this.previewPorts.set(sessionId, p);
+    return p;
+  }
+
+  async create(sessionId: string, opts: CreateOpts = {}) {
     const dir = this.dir(sessionId);
     await Bun.$`mkdir -p ${dir}`.quiet();
     if (!(await Bun.file(`${dir}/README.md`).exists())) {
@@ -109,6 +125,13 @@ export class LocalDriver implements ExecDriver {
     // Starter snapshot at creation — before any learner edit (diff/reset baseline).
     const starter = this.starterDir(sessionId);
     if (!(await Bun.file(`${starter}/.starter-ok`).exists())) {
+      for (const f of opts.seedFiles ?? []) {
+        assertHomeRel(f.path); // same guard: relative, no "..", no empty parts
+        const full = `${dir}/${f.path}`;
+        if (await Bun.file(full).exists()) continue; // never overwrite what the student or lesson already has
+        await Bun.$`mkdir -p ${full.slice(0, full.lastIndexOf("/"))}`.quiet();
+        await Bun.write(full, f.content);
+      }
       await Bun.$`rm -rf ${starter}`.quiet();
       await Bun.$`cp -a ${dir} ${starter}`.quiet();
       await Bun.write(`${starter}/.starter-ok`, "1");

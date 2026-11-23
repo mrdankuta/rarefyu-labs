@@ -26,6 +26,8 @@ export class ChatController {
   private snap: Map<string, number> | null = null;
   private turnIdx = -1;
   private sending = false;
+  /** Called once when a live turn ends (succeeded, failed or interrupted), never per streamed token. The page refreshes the preview here. */
+  onTurnEnd: (() => void) | null = null;
 
   private client: AgentClient;
   private unsub: (() => void) | null = null;
@@ -105,9 +107,11 @@ export class ChatController {
   private onEvent(ev: AgentEvent) {
     if (!this.sessionId || ev.data?.sessionID !== this.sessionId) return;
     if (ev.type === "session.execution.started" && !this.snap) this.beginTurn();
+    const was = this.chat.running;
     applyEvent(this.chat, ev);
     if (ev.type === "session.tool.success") void this.host?.syncNow(); // open editors follow the agent while it works
     if (ev.type === "session.execution.succeeded" || ev.type === "session.execution.failed" || ev.type === "session.execution.interrupted") void this.finishTurn();
+    if (was && !this.chat.running) this.onTurnEnd?.();
   }
 
   async send(raw: string) {
