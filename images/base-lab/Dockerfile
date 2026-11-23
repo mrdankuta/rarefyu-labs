@@ -17,8 +17,8 @@ USER student
 WORKDIR /home/student
 
 # In-lab check helpers (spec §3 check contract: FAIL: <hint> + nonzero exit).
-COPY lab-check fail-message lab-welcome /usr/local/bin/
+COPY lab-check fail-message lab-welcome lab-transfer /usr/local/bin/
 USER root
-RUN chmod +x /usr/local/bin/lab-check /usr/local/bin/fail-message /usr/local/bin/lab-welcome \
+RUN chmod +x /usr/local/bin/lab-check /usr/local/bin/fail-message /usr/local/bin/lab-welcome /usr/local/bin/lab-transfer \
     && printf '%s\n' '[ -t 1 ] && command -v lab-welcome >/dev/null && { lab-welcome; export LAB_WELCOMED=1; }' >> /etc/bash.bashrc
 USER student

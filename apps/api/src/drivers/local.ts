@@ -1,8 +1,12 @@
+import { frameFiles, parseTransferResult, type ImportInput, type TransferResult } from "../transfer";
 import { assertHomeRel, resolveInside } from "./paths";
 import type { DriverCapabilities, ExecDriver, TerminalHandle, WorkspaceAddress } from "./types";
 
 const ROOT =
   process.env.PLAYGROUND_ROOT ?? "/tmp/labs-playgrounds";
+/** The same helper the lab image ships; found in the repo checkout when not on PATH. */
+const TRANSFER =
+  process.env.LAB_TRANSFER ?? new URL("../../../../images/base-lab/lab-transfer", import.meta.url).pathname;
 const RING_MAX = 50 * 1024; // 50KB WS replay ring (plan.md T4.2)
 
 /** One persistent shell: long-lived bash + output ring + subscribers. */
@@ -162,6 +166,31 @@ export class LocalDriver implements ExecDriver {
     ]);
     clearTimeout(timer);
     return { stdout, stderr, exitCode };
+  }
+
+  async archiveZip(sessionId: string, sub = "", opts?: { heavy?: boolean }): Promise<ReadableStream<Uint8Array>> {
+    await this.create(sessionId);
+    const proc = Bun.spawn(["python3", TRANSFER, this.dir(sessionId), "zip-out", sub || ".", ...(opts?.heavy ? ["--heavy"] : [])], {
+      stdout: "pipe", stderr: "ignore", stdin: "ignore",
+    });
+    return proc.stdout as unknown as ReadableStream<Uint8Array>;
+  }
+
+  async readBytes(sessionId: string, path: string): Promise<ReadableStream<Uint8Array>> {
+    await this.create(sessionId);
+    const proc = Bun.spawn(["python3", TRANSFER, this.dir(sessionId), "cat", path], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
+    return proc.stdout as unknown as ReadableStream<Uint8Array>;
+  }
+
+  async importUpload(sessionId: string, dest: string, input: ImportInput): Promise<TransferResult> {
+    await this.create(sessionId);
+    const body = input.kind === "zip" ? input.data : frameFiles(input.files);
+    const proc = Bun.spawn(["python3", TRANSFER, this.dir(sessionId), input.kind === "zip" ? "unzip" : "put", dest || "."], {
+      stdin: new Blob([body as BlobPart]), stdout: "pipe", stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    if (code !== 0) throw new Error(err.trim() || "upload failed");
+    return parseTransferResult(out);
   }
 
   async snapshotTar(sessionId: string): Promise<ReadableStream<Uint8Array>> {

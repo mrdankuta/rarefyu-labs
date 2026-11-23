@@ -1,3 +1,4 @@
+import { frameFiles, parseTransferResult, type ImportInput, type TransferResult } from "../transfer";
 import { assertHomeRel, resolveInside } from "./paths";
 import type { DriverCapabilities, ExecDriver, Isolation, TerminalHandle, WorkspaceAddress } from "./types";
 
@@ -234,6 +235,34 @@ export class DockerDriver implements ExecDriver {
       timeoutMs: (opts?.timeoutMs ?? 30_000) + 5000,
     });
     return r;
+  }
+
+  async archiveZip(sessionId: string, sub = "", opts?: { heavy?: boolean }): Promise<ReadableStream<Uint8Array>> {
+    await this.ensureRunning(sessionId);
+    const proc = Bun.spawn(
+      [this.bin, "exec", this.cname(sessionId), "lab-transfer", WORKSPACE, "zip-out", sub || ".", ...(opts?.heavy ? ["--heavy"] : [])],
+      { stdout: "pipe", stderr: "ignore", stdin: "ignore" },
+    );
+    return proc.stdout as unknown as ReadableStream<Uint8Array>;
+  }
+
+  async readBytes(sessionId: string, path: string): Promise<ReadableStream<Uint8Array>> {
+    await this.ensureRunning(sessionId);
+    const proc = Bun.spawn([this.bin, "exec", this.cname(sessionId), "lab-transfer", WORKSPACE, "cat", path], {
+      stdout: "pipe", stderr: "ignore", stdin: "ignore",
+    });
+    return proc.stdout as unknown as ReadableStream<Uint8Array>;
+  }
+
+  async importUpload(sessionId: string, dest: string, input: ImportInput): Promise<TransferResult> {
+    await this.ensureRunning(sessionId);
+    const body = input.kind === "zip" ? input.data : frameFiles(input.files);
+    const r = await this.exec(sessionId, ["lab-transfer", WORKSPACE, input.kind === "zip" ? "unzip" : "put", dest || "."], {
+      stdin: new Blob([body as BlobPart]),
+      timeoutMs: 120_000,
+    });
+    if (r.exitCode !== 0) throw new Error(r.stderr.trim() || "upload failed");
+    return parseTransferResult(r.stdout);
   }
 
   async snapshotTar(sessionId: string): Promise<ReadableStream<Uint8Array>> {

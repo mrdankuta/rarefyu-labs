@@ -2,6 +2,7 @@
   import "../../../app.css";
   import { page } from "$app/stores";
   import { onMount, onDestroy } from "svelte";
+  import { collectDropped, collectInput, describe as describeUpload, downloadUrl, upload } from "$lib/transfer";
   import { EditorState } from "@codemirror/state";
   import { EditorView, keymap } from "@codemirror/view";
   import { javascript } from "@codemirror/lang-javascript";
@@ -220,6 +221,37 @@
     diffText = body.changed ? body.diff : "(identical to starter)";
     showDiff = true;
   }
+  // --- laptop <-> workspace transfer ---
+  let uploading = $state(false);
+  let dragOver = $state(false);
+  let filePick: HTMLInputElement | undefined = $state();
+  let dirPick: HTMLInputElement | undefined = $state();
+  async function doUpload(getItems: () => ReturnType<typeof collectInput> | Promise<ReturnType<typeof collectInput>>) {
+    if (uploading) return;
+    uploading = true;
+    fileNotice = "uploading…";
+    try {
+      const r = await upload(API, id, await getItems(), cwd);
+      fileNotice = describeUpload(r);
+      await listFiles();
+    } catch (e) {
+      fileNotice = `upload failed: ${(e as Error).message}`;
+    } finally {
+      uploading = false;
+    }
+  }
+  function onDrop(e: DragEvent) {
+    e.preventDefault();
+    dragOver = false;
+    if (e.dataTransfer) { const dt = e.dataTransfer; void doUpload(() => collectDropped(dt)); }
+  }
+  function onPicked(e: Event) {
+    const el = e.currentTarget as HTMLInputElement;
+    const list = el.files;
+    if (list?.length) void doUpload(() => collectInput(list));
+    el.value = "";
+  }
+
   // --- explorer: new / rename / delete ---
   let newFileName = $state<string | null>(null);
   let renamingPath = $state<string | null>(null);
@@ -734,7 +766,7 @@
       {#if agent}<span class="agentchip" class:off={!agent.ready} title={agent.ready ? "Your coding agent has its model key. Run opencode in the terminal." : (agent.reason ?? "No model key installed. Ask your instructor for a class code.")}><i></i>{agent.ready ? `Agent ready${agent.model ? ` · ${agent.model.split("/").pop()}` : ""}` : "No agent key"}</span>{/if}
       <span class="fontbtns" role="group" aria-label="text size"><button class="ibtn" aria-label="smaller text" onclick={() => bumpFont(-1)}>A−</button><button class="ibtn" aria-label="larger text" onclick={() => bumpFont(1)}>A+</button></span>
       <span class="timer" class:urgent={ttlUrgent} title={ttlUrgent ? "less than 15 minutes left — save your work" : "time remaining"}>{ttlText}</span>
-      <a class="ibtn" href="{API}/api/playgrounds/{id}/snapshot.tar" download title="download a copy of your workspace files">⬇ Save my work</a>
+      <a class="ibtn" href={downloadUrl(API, id)} download title="download your project as a .zip (node_modules and .git left out)">⬇ Save my work</a>
       {#if confirmStop}
         <span class="confirm-inline">stop this playground? <button class="ibtn danger" onclick={() => fetch(`${API}/api/playgrounds/${id}`, { method: "DELETE" }).then(() => location.assign("/"))}>yes, stop</button> <button class="ibtn" onclick={() => (confirmStop = false)}>keep</button></span>
       {:else}
@@ -784,8 +816,12 @@
     </section>
     <section class="ide">
       <div class="actbar"><button class="act active">🗀</button></div>
-      <div class="side">
-        <div class="fh">Explorer <button class="xbtn" aria-label="new file" title="new file" onclick={() => (newFileName = "")}>＋</button></div>
+      <div class="side" class:dragover={dragOver} role="region" aria-label="explorer"
+        ondragover={(e) => { e.preventDefault(); dragOver = true; }} ondragleave={(e) => { if (e.currentTarget === e.target) dragOver = false; }} ondrop={onDrop}>
+        <input type="file" multiple hidden bind:this={filePick} onchange={onPicked} aria-label="upload files" />
+        <input type="file" hidden webkitdirectory bind:this={dirPick} onchange={onPicked} aria-label="upload folder" />
+        <div class="fh">Explorer <button class="xbtn" aria-label="new file" title="new file" onclick={() => (newFileName = "")}>＋</button><button class="xbtn" aria-label="upload files" title="upload files from your computer" onclick={() => filePick?.click()}>⬆</button><button class="xbtn" aria-label="upload folder" title="upload a folder from your computer" onclick={() => dirPick?.click()}>🗀⬆</button></div>
+        {#if dragOver}<div class="dropnote">Drop files or folders to upload{cwd ? ` into ${cwd}` : ""}</div>{/if}
         {#if newFileName !== null}
           <input class="xin" aria-label="new file name" placeholder="name.ext" bind:value={newFileName} use:focusEl onkeydown={(e) => { if (e.key === "Enter") createFile(); else if (e.key === "Escape") newFileName = null; }} onblur={() => (newFileName = null)} />
         {/if}
@@ -796,7 +832,7 @@
           {:else if deletingPath === f.path}
             <div class="file warn">delete {f.path.split("/").pop()}? <a href="#" onmousedown={(e) => (e.preventDefault(), deleteEntry())}>yes</a> · <a href="#" onmousedown={(e) => (e.preventDefault(), deletingPath = null)}>no</a></div>
           {:else}
-            <div class="file" class:sel={openPath === f.path} title={f.path} data-path={f.path} onclick={() => f.type === "dir" ? (cwd = f.path, listFiles()) : openFile(f.path)}><span class="fic">{fileIcon(f.path.split("/").pop() ?? "", f.type)}</span><span class="fname">{f.path.split("/").pop()}</span><span class="facts"><button aria-label="rename {f.path}" onclick={(e) => { e.stopPropagation(); renamingPath = f.path; renameTo = f.path; }}>✎</button><button aria-label="delete {f.path}" onclick={(e) => { e.stopPropagation(); deletingPath = f.path; }}>🗑</button></span></div>
+            <div class="file" class:sel={openPath === f.path} title={f.path} data-path={f.path} onclick={() => f.type === "dir" ? (cwd = f.path, listFiles()) : openFile(f.path)}><span class="fic">{fileIcon(f.path.split("/").pop() ?? "", f.type)}</span><span class="fname">{f.path.split("/").pop()}</span><span class="facts"><a class="dl" aria-label="download {f.path}" title={f.type === "dir" ? "download folder as .zip" : "download file"} href={downloadUrl(API, id, f.path)} onclick={(e) => e.stopPropagation()}>⬇</a><button aria-label="rename {f.path}" onclick={(e) => { e.stopPropagation(); renamingPath = f.path; renameTo = f.path; }}>✎</button><button aria-label="delete {f.path}" onclick={(e) => { e.stopPropagation(); deletingPath = f.path; }}>🗑</button></span></div>
           {/if}
         {/each}
         <div class="fh" style="margin-top:10px">Project</div>
@@ -804,6 +840,7 @@
           <div class="file warn">reset all? <a href="#" onclick={(e) => (e.preventDefault(), resetProject())}>yes</a> · <a href="#" onclick={(e) => (e.preventDefault(), confirmResetProject = false)}>no</a></div>
         {:else}
           <div class="file" onclick={() => (confirmResetProject = true)}>⟲ reset project</div>
+          <a class="file" href={downloadUrl(API, id)} download>⬇ download project (.zip)</a>
         {/if}
       </div>
       <div class="ed">
@@ -916,7 +953,10 @@
   .xin{width:100%;box-sizing:border-box;background:#0f0f0f;color:#fff;border:1px solid #2f81f7;border-radius:4px;font-family:var(--mono);font-size:12px;padding:3px 6px;margin:2px 0}
   .file{display:flex;align-items:center}
   .fname{flex:1;overflow:hidden;text-overflow:ellipsis}
-  .facts{display:none;gap:2px}
+  .facts{display:none;gap:2px;align-items:center}
+  .facts .dl{color:#aaa;font-size:11px;text-decoration:none;padding:0 2px}
+  .side.dragover{outline:2px dashed #4da3ff;outline-offset:-4px;background:#16202b}
+  .dropnote{color:#4da3ff;font-size:12px;padding:6px 4px}
   .file:hover .facts{display:inline-flex}
   .facts button{background:none;border:0;color:#aaa;font-size:11px;cursor:pointer;padding:0 2px}
   .savebtn{background:#2f81f7;color:#fff;border:0;border-radius:6px;font-size:12px;font-weight:700;padding:3px 10px;cursor:pointer}

@@ -31,9 +31,8 @@ workspace with `auth.json` 0600 and "Agent ready · kimi-k3", same code resumes.
 
 ## Known gaps
 - Image is 2.77 GB: slim it before asking 60 students to pull it.
-- Workspaces are not persistent across container restarts (session store is in memory and
-  the reconciler deletes workspaces with no session). Needs "adopt existing workspace for
-  this seat on redeem" before laptop use.
+- (Fixed) Sessions now persist to `${DATA_DIR}/sessions.json` and reload before the reconciler
+  runs, so an API/container restart keeps workspaces. Verified with `docker restart`.
 - Keys are plaintext in Convex and readable by the student who owns them; use per-student,
   revocable keys and rotate after class.
 - On hosts with ufw, containers cannot reach a Convex backend on the host (hosted Convex is fine).

@@ -75,6 +75,69 @@ export function driverContract(name: string, make: () => ExecDriver, opts?: { sk
         await expect(d.injectCredentials(id, [{ path: bad, content: "x" }])).rejects.toThrow();
     });
 
+    describe("file transfer", () => {
+      const bytesOf = async (st: ReadableStream<Uint8Array>) => new Uint8Array(await new Response(st).arrayBuffer());
+      const enc = (x: string) => new TextEncoder().encode(x);
+      const bin = Uint8Array.from({ length: 256 }, (_, i) => i);
+
+      t("uploaded files keep binary content and nested folders; node_modules is skipped", async () => {
+        const id = sid("up");
+        await d.create(id);
+        const r = await d.importUpload(id, "proj", {
+          kind: "files",
+          files: [
+            { path: "src/app.js", data: enc("console.log(1)") },
+            { path: "img/logo.bin", data: bin },
+            { path: "node_modules/x/index.js", data: enc("nope") },
+            { path: ".DS_Store", data: enc("junk") },
+          ],
+        });
+        expect(r).toEqual({ files: 2, bytes: 14 + 256, skipped: 2 });
+        expect(await bytesOf(await d.readBytes(id, "proj/img/logo.bin"))).toEqual(bin);
+        expect((await d.readFile(id, "proj/src/app.js")).content).toBe("console.log(1)");
+        const tree = (await d.listFiles(id, "proj")).map((f) => f.path).join(",");
+        expect(tree).not.toContain("node_modules");
+      });
+
+      t("uploads cannot escape the workspace", async () => {
+        const id = sid("up-bad");
+        await d.create(id);
+        for (const path of ["../evil.txt", "/etc/evil.txt", "a/../../evil.txt"])
+          await expect(d.importUpload(id, "", { kind: "files", files: [{ path, data: enc("x") }] })).rejects.toThrow(/bad path|escapes/);
+        await expect(d.importUpload(id, "../up", { kind: "files", files: [{ path: "x", data: enc("x") }] })).rejects.toThrow();
+      });
+
+      t("too many files in one upload is refused with a clear message", async () => {
+        const id = sid("up-many");
+        await d.create(id);
+        const files = Array.from({ length: 5001 }, (_, i) => ({ path: `f/${i}.txt`, data: enc("x") }));
+        await expect(d.importUpload(id, "", { kind: "files", files })).rejects.toThrow(/too many files/);
+      });
+
+      t("zip download roundtrips through zip upload, leaving heavy folders out unless asked", async () => {
+        const id = sid("zip");
+        await d.create(id);
+        await d.importUpload(id, "", { kind: "files", files: [{ path: "a/one.txt", data: enc("1") }, { path: "b.bin", data: bin }] });
+        await d.writeFile(id, "node_modules/dep/i.js", "x");
+        const zip = await bytesOf(await d.archiveZip(id));
+        expect(zip.length).toBeGreaterThan(100);
+        expect(String.fromCharCode(...zip.slice(0, 2))).toBe("PK");
+        const r = await d.importUpload(id, "restored", { kind: "zip", data: zip });
+        expect(r.files).toBeGreaterThanOrEqual(3); // README.md, a/one.txt, b.bin
+        expect(await bytesOf(await d.readBytes(id, "restored/b.bin"))).toEqual(bin);
+        expect((await d.listFiles(id, "restored")).map((f) => f.path).join(",")).not.toContain("node_modules");
+        const sub = await bytesOf(await d.archiveZip(id, "a"));
+        const r2 = await d.importUpload(id, "only-a", { kind: "zip", data: sub });
+        expect(r2.files).toBe(1);
+      });
+
+      t("a non-zip upload is rejected", async () => {
+        const id = sid("zip-bad");
+        await d.create(id);
+        await expect(d.importUpload(id, "", { kind: "zip", data: enc("this is not a zip") })).rejects.toThrow(/not a valid zip/);
+      });
+    });
+
     t("run captures stdout, stderr and exit code", async () => {
       const id = sid("run");
       await d.create(id);

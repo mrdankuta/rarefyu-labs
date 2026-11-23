@@ -5,6 +5,8 @@
  * are deferred (see spec #30).
  */
 
+import type { ImportInput, TransferResult } from "../transfer";
+
 /** How strongly the backend isolates a workspace from the host. */
 export type Isolation = "none" | "container" | "gvisor";
 
@@ -52,6 +54,12 @@ export interface ExecDriver {
    * mode 0600 and persist with the workspace (survive hibernate/wake).
    */
   injectCredentials(sessionId: string, files: { path: string; content: string }[]): Promise<void>;
+  /** Zip of a workspace folder (default: all) as a byte stream; skips node_modules/.git etc. unless heavy. */
+  archiveZip(sessionId: string, sub?: string, opts?: { heavy?: boolean }): Promise<ReadableStream<Uint8Array>>;
+  /** Raw bytes of one workspace file (binary-safe download). */
+  readBytes(sessionId: string, path: string): Promise<ReadableStream<Uint8Array>>;
+  /** Write uploaded files (or extract a zip) under `dest`. Enforces count/size caps and path safety; throws with a human message. */
+  importUpload(sessionId: string, dest: string, input: ImportInput): Promise<TransferResult>;
   /** Stream a workspace tarball (snapshot download). */
   snapshotTar(sessionId: string): Promise<ReadableStream<Uint8Array>>;
   /** File tree under workspace (relative paths, traversal-guarded). */

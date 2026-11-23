@@ -352,6 +352,80 @@ app.get("/api/playgrounds/:id/snapshot.tar", async (c) => {
   });
 });
 
+// --- File transfer: laptop <-> workspace ---
+const UPLOAD_MAX_BYTES = 100 * 1024 * 1024;
+const safeName = (s: string) => s.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "workspace";
+
+// Download the whole project or one folder as a zip, or one file as-is (decided server-side).
+// ?path=<workspace-relative> (default: whole workspace)  &heavy=1 to include node_modules etc.
+async function entryType(id: string, path: string): Promise<"file" | "dir" | null> {
+  if (!path) return "dir";
+  const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+  const list = await driver.listFiles(id, parent).catch(() => []);
+  return list.find((f) => f.path === path)?.type ?? null;
+}
+app.get("/api/playgrounds/:id/download", async (c) => {
+  const rec = getPlayground(c.req.param("id"));
+  if (!rec || rec.status === "destroyed") return c.json({ error: "playground not found" }, 404);
+  const path = (c.req.query("path") ?? "").replace(/^\/+|\/+$/g, "");
+  if (path.split("/").includes("..")) return c.json({ error: "bad path" }, 400);
+  try {
+    const kind = await entryType(rec.id, path);
+    if (!kind) return c.json({ error: "no such file or folder" }, 404);
+    if (kind === "file") {
+      return new Response(await driver.readBytes(rec.id, path), {
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-disposition": `attachment; filename="${safeName(path.split("/").pop() ?? "file")}"`,
+        },
+      });
+    }
+    const stream = await driver.archiveZip(rec.id, path, { heavy: c.req.query("heavy") === "1" });
+    const base = path ? safeName(path.split("/").pop() ?? "folder") : `workspace-${rec.id.slice(0, 8)}`;
+    return new Response(stream, {
+      headers: { "content-type": "application/zip", "content-disposition": `attachment; filename="${base}.zip"` },
+    });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+// Upload files / a folder / a zip into the workspace.
+// multipart: repeated `files` (File) with a parallel repeated `paths` (relative path per file); ?dest=<folder>; ?extract=1 unzips a single .zip.
+app.post("/api/playgrounds/:id/upload", async (c) => {
+  const rec = getPlayground(c.req.param("id"));
+  if (!rec || rec.status === "destroyed") return c.json({ error: "playground not found" }, 404);
+  const len = Number(c.req.header("content-length") ?? 0);
+  if (len > UPLOAD_MAX_BYTES + 1024 * 1024)
+    return c.json({ error: `upload is larger than ${UPLOAD_MAX_BYTES / (1024 * 1024)} MB — leave out node_modules and build folders` }, 413);
+  let form: FormData;
+  try {
+    form = await c.req.formData();
+  } catch {
+    return c.json({ error: "send multipart/form-data with `files`" }, 400);
+  }
+  const files = form.getAll("files").filter((f): f is File => typeof f !== "string");
+  const paths = form.getAll("paths").map(String);
+  if (!files.length) return c.json({ error: "no files in upload" }, 400);
+  const dest = (c.req.query("dest") ?? "").replace(/^\/+/, "");
+  try {
+    let result;
+    if (c.req.query("extract") === "1") {
+      if (files.length !== 1) return c.json({ error: "send exactly one zip to extract" }, 400);
+      result = await driver.importUpload(rec.id, dest, { kind: "zip", data: new Uint8Array(await files[0].arrayBuffer()) });
+    } else {
+      const items = await Promise.all(
+        files.map(async (f, i) => ({ path: paths[i] || f.name, data: new Uint8Array(await f.arrayBuffer()) })),
+      );
+      result = await driver.importUpload(rec.id, dest, { kind: "files", files: items });
+    }
+    void runLifecycle();
+    return c.json(result, 201);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
 // --- Session filesystem (issue #5): explorer, read, save, diff, reset ---
 // All paths are workspace-relative; driver rejects traversal outside the root.
 app.get("/api/playgrounds/:id/files", async (c) => {
