@@ -25,6 +25,8 @@ export interface AgentRouteDeps {
   servers: AgentServers;
   /** Ownership check, the same rule as the other workspace routes. */
   access(headers: Headers, id: string): Promise<Access>;
+  /** Does this workspace have a class seat (model key)? Reported in the status so the chat can warn when not. */
+  keyed?(id: string): boolean;
 }
 
 const HOP = ["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "host", "content-length"];
@@ -33,6 +35,14 @@ const HOP = ["connection", "keep-alive", "proxy-authenticate", "proxy-authorizat
  * Map a request path under `/api/playgrounds/:id/agent` to the upstream path, or null if it
  * is not allowed (outside /api/, traversal, encoded separators, control chars).
  */
+/**
+ * Upstream surfaces a browser must never reach: they hand back or change the model key
+ * (GET /api/credential returns the key in plaintext, verified on 2.4.1; /api/config and /api/model*
+ * echo provider settings; /api/integration/* connects keys). The chat panel needs none of them
+ * and the API itself talks to the server directly when it installs the seat key.
+ */
+const BLOCKED = /^\/api\/(credential|integration|config|provider|model|experimental\/config)(\/|$)/i;
+
 export function upstreamPath(id: string, pathname: string): string | null {
   const prefix = `/api/playgrounds/${id}/agent`;
   if (!pathname.startsWith(`${prefix}/api/`)) return null;
@@ -42,6 +52,7 @@ export function upstreamPath(id: string, pathname: string): string | null {
   try { decoded = decodeURIComponent(rest); } catch { return null; }
   if (decoded.includes("\\") || decoded.split("/").some((s) => s === ".." || s === ".")) return null;
   if (rest.includes("//")) return null;
+  if (BLOCKED.test(decoded)) return null;
   return rest;
 }
 
@@ -79,14 +90,16 @@ export function agentRoutes(deps: AgentRouteDeps) {
   r.get("/api/playgrounds/:id/agent", async (c) => {
     const denied = await gate(c);
     if (denied) return denied;
-    return c.json(await deps.servers.status(c.req.param("id")));
+    const id = c.req.param("id");
+    return c.json({ ...(await deps.servers.status(id)), keyed: deps.keyed?.(id) ?? false });
   });
 
   r.post("/api/playgrounds/:id/agent", async (c) => {
     const denied = await gate(c);
     if (denied) return denied;
     try {
-      return c.json(await deps.servers.start(c.req.param("id")));
+      const id = c.req.param("id");
+      return c.json({ ...(await deps.servers.start(id)), keyed: deps.keyed?.(id) ?? false });
     } catch (err) {
       return c.json({ error: (err as Error).message, state: "unhealthy" }, 503);
     }
