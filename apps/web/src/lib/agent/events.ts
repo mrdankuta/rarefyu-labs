@@ -2,11 +2,12 @@
 // controller holds the state in $state; tests hold a plain object). Shapes verified against a live 2.4.1
 // server (see docs in the PR): events are `{id, type, data:{sessionID, ...}}`.
 import { mapAgentError, isAbort, type StructuredError, type UiError } from "./errors";
+import { editPathsOf } from "./edits";
 
 export type ToolStatus = "running" | "done" | "error";
 export type UiPart =
   | { type: "text"; key: string; text: string }
-  | { type: "tool"; id: string; name: string; status: ToolStatus; label: string };
+  | { type: "tool"; id: string; name: string; status: ToolStatus; label: string; /** files this call writes (edit cards) */ paths?: string[] };
 export type UiMessage =
   | { kind: "user"; id: string; text: string; pending?: boolean }
   | { kind: "assistant"; id: string; parts: UiPart[] }
@@ -142,7 +143,7 @@ export function applyEvent(st: ChatState, ev: AgentEvent): void {
     }
     case "session.tool.called": {
       const p = toolPart(assistant(st, str(d.assistantMessageID)), str(d.id));
-      p.label = toolLabel(p.name, d.input); return;
+      p.label = toolLabel(p.name, d.input); p.paths = editPathsOf(p.name, d.input); return;
     }
     case "session.tool.success":
       toolPart(assistant(st, str(d.assistantMessageID)), str(d.id)).status = "done"; return;
@@ -168,7 +169,7 @@ export function stateFromMessages(msgs: any[], running = false): ChatState {
         if (c.type === "text" && c.text) parts.push({ type: "text", key: `text-${ord++}`, text: c.text });
         else if (c.type === "tool") {
           const s = c.state?.status;
-          parts.push({ type: "tool", id: c.id, name: c.name, status: s === "completed" ? "done" : s === "error" ? "error" : "running", label: toolLabel(c.name, c.state?.input) });
+          parts.push({ type: "tool", id: c.id, name: c.name, status: s === "completed" ? "done" : s === "error" ? "error" : "running", label: toolLabel(c.name, c.state?.input), paths: editPathsOf(c.name, c.state?.input) });
         }
       }
       // a tool that never finished in a stored turn is not running any more

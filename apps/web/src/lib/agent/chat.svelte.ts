@@ -4,6 +4,7 @@ import { createAgentClient, type AgentClient, type ConnState } from "./api";
 import { addPendingUser, adoptUserId, applyEvent, failPendingUser, newChatState, pushError, stateFromMessages, type AgentEvent } from "./events";
 import { mapRequestError, type UiError } from "./errors";
 import { readSessionId, writeSessionId } from "./storage";
+import { changedSince, type EditHost } from "./edits";
 
 export type Phase = "idle" | "starting" | "ready" | "failed";
 
@@ -17,6 +18,14 @@ export class ChatController {
   noKey = $state(false);
   sessionId = $state<string | null>(null);
   loading = $state(false);
+
+  /** The lab page's change tracking + editor (set by the page). Edit cards, editor refresh and save-before-send use it. */
+  host: EditHost | null = null;
+  /** Per turn: files the lab saw change while the agent worked (covers shell edits and deletes). */
+  turnChanged = $state<Record<number, string[]>>({});
+  private snap: Map<string, number> | null = null;
+  private turnIdx = -1;
+  private sending = false;
 
   private client: AgentClient;
   private unsub: (() => void) | null = null;
@@ -79,31 +88,53 @@ export class ChatController {
     } catch { /* keep what we have; the stream will carry on */ }
   }
 
+  private userCount() { return this.chat.messages.filter((m) => m.kind === "user").length; }
+  private beginTurn() {
+    this.turnIdx = Math.max(0, this.userCount() - 1);
+    this.snap = this.host?.versions() ?? null;
+  }
+  /** Turn over: re-read the workspace now (not at the next 5s poll) and remember which files moved. */
+  private async finishTurn() {
+    const idx = this.turnIdx, snap = this.snap, host = this.host;
+    this.snap = null;
+    if (!host || !snap) return;
+    await host.syncNow();
+    this.turnChanged = { ...this.turnChanged, [idx]: changedSince(snap, host.versions()) };
+  }
+
   private onEvent(ev: AgentEvent) {
     if (!this.sessionId || ev.data?.sessionID !== this.sessionId) return;
+    if (ev.type === "session.execution.started" && !this.snap) this.beginTurn();
     applyEvent(this.chat, ev);
+    if (ev.type === "session.tool.success") void this.host?.syncNow(); // open editors follow the agent while it works
+    if (ev.type === "session.execution.succeeded" || ev.type === "session.execution.failed" || ev.type === "session.execution.interrupted") void this.finishTurn();
   }
 
   async send(raw: string) {
     const text = raw.trim();
-    if (!text || this.chat.running || this.phase !== "ready") return;
+    if (!text || this.chat.running || this.sending || this.phase !== "ready") return;
+    this.sending = true;
     this.chat.retry = null;
     let local: string | null = null;
     try {
+      // the agent must see what the student typed: get unsaved editor edits onto disk first
+      try { await this.host?.flushSaves(); } catch { /* the lab reports a failed save itself */ }
       if (!this.sessionId) {
         const s = await this.client.createSession();
         this.sessionId = s.id;
         writeSessionId(this.workspaceId, s.id);
       }
       local = addPendingUser(this.chat, text);
+      this.beginTurn();
       this.chat.running = true; // optimistic: the "working" indicator shows at once
       const serverId = await this.client.sendPrompt(this.sessionId, text);
       adoptUserId(this.chat, local, serverId);
     } catch (e) {
       if (local) failPendingUser(this.chat, local);
+      this.snap = null;
       this.chat.running = false;
       pushError(this.chat, mapRequestError(e));
-    }
+    } finally { this.sending = false; }
   }
 
   async stop() {
@@ -119,6 +150,7 @@ export class ChatController {
     const old = this.sessionId;
     this.sessionId = null;
     this.chat = newChatState();
+    this.turnChanged = {}; this.snap = null;
     writeSessionId(this.workspaceId, null);
     if (old) { try { await this.client.interrupt(old); } catch { /* idle already */ } }
   }

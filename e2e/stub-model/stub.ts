@@ -6,6 +6,8 @@
  *   (none)        stream a normal text reply ("Hello from the stub model. ...")
  *   [[slow]]      stream words slowly (~150ms each, 60 words) so a turn can be interrupted
  *   [[tool]]      ask for a `write` tool call (hello.txt), then, after the tool result, a final text reply
+ *   [[call:<tool> <json args>]]  (one or more) call that tool with those args, one call per model step, in order,
+ *                 then a final text reply "Done with the edits." e.g. [[call:write {"filePath":"a.txt","content":"x\n"}]]
  *   [[401]] [[429]] [[500]]   respond with that HTTP status and a provider-style JSON error body
  * Every request is recorded in `requests` (authorization header + body) for assertions.
  */
@@ -59,7 +61,18 @@ export function startStub(port = 0): Promise<{ port: number; url: string; reques
     res.on("close", () => { closed = true; }); // opencode aborted (Stop)
     const send = (s: string) => { if (!closed) res.write(s); };
     send(chunk({ role: "assistant", content: "" }));
-    if (text.includes("[[tool]]") && !afterTool) {
+    const calls = [...text.matchAll(/\[\[call:(\w+) (\{.*?\})\]\]/g)].map((m) => ({ name: m[1]!, args: m[2]! }));
+    let toolsSinceUser = 0;
+    for (let i = msgs.length - 1; i >= 0 && msgs[i].role !== "user"; i--) if (msgs[i].role === "tool") toolsSinceUser++;
+    if (calls.length && toolsSinceUser < calls.length) {
+      const c = calls[toolsSinceUser]!;
+      send(chunk({ tool_calls: [{ index: 0, id: `call_stub_${toolsSinceUser}`, type: "function", function: { name: c.name, arguments: "" } }] }));
+      send(chunk({ tool_calls: [{ index: 0, function: { arguments: c.args } }] }));
+      send(chunk({}, "tool_calls", { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } }));
+    } else if (calls.length) {
+      for (const w of "Done with the edits.".match(/\S+\s*/g) ?? []) { send(chunk({ content: w })); await sleep(20); }
+      send(chunk({}, "stop", { usage: { prompt_tokens: 10, completion_tokens: 12, total_tokens: 22 } }));
+    } else if (text.includes("[[tool]]") && !afterTool) {
       send(chunk({ tool_calls: [{ index: 0, id: "call_stub1", type: "function", function: { name: "write", arguments: "" } }] }));
       const args = JSON.stringify({ path: "hello.txt", content: "hello from the stub\n" });
       send(chunk({ tool_calls: [{ index: 0, function: { arguments: args } }] }));

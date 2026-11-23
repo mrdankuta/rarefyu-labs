@@ -9,6 +9,7 @@
   import { diffLines, statOf, withContext, type DiffLine } from "$lib/diff";
   import { ChatController } from "$lib/agent/chat.svelte";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
+  import type { EditHost } from "$lib/agent/edits";
   import { EditorState, Compartment } from "@codemirror/state";
   import { EditorView, keymap } from "@codemirror/view";
   import { basicSetup } from "codemirror";
@@ -41,7 +42,7 @@
   // then kept for the life of the page so switching layouts neither drops the conversation nor reconnects.
   let chatCtl = $state<ChatController | null>(null);
   $effect(() => {
-    if (shell === "chat" && id && !chatCtl) { chatCtl = new ChatController(id); void chatCtl.start(); }
+    if (shell === "chat" && id && !chatCtl) { chatCtl = new ChatController(id); chatCtl.host = editHost; void chatCtl.start(); }
   });
   function setShell(l: ShellLayout) {
     if (layoutForced || l === shell) return;
@@ -186,7 +187,7 @@
           if (autosave) {
             if (autoTimer) clearTimeout(autoTimer);
             const tid = activeEd;
-            autoTimer = setTimeout(() => { if (dirtyIds.has(tid)) void saveFile(tid); }, 1200);
+            autoTimer = setTimeout(() => { if (dirtyIds.has(tid) && !conflicts.has(tid)) void saveFile(tid); }, 1200);
           }
         }),
       ],
@@ -199,7 +200,7 @@
   }
   function setDirty(tabId: string, v: boolean) {
     const n = new Set(dirtyIds);
-    if (v) n.add(tabId); else n.delete(tabId);
+    if (v) n.add(tabId); else { n.delete(tabId); if (conflicts.has(tabId)) { const c = new Set(conflicts); c.delete(tabId); conflicts = c; } }
     dirtyIds = n;
   }
   const PLACEHOLDER = "";
@@ -214,7 +215,14 @@
   }
 
   // --- change tracking: what moved on disk outside the editor (agent, terminal) ---
-  interface Change { status: "added" | "modified" | "deleted"; add: number; del: number }
+  interface Change { status: "added" | "modified" | "deleted"; add: number; del: number; /** too large or binary: no line diff, but Keep/Undo still work */ opaque?: boolean }
+  // Edit cards in the chat read and drive THIS state (see editHost below), so the chat and the Changes tab never disagree.
+  const changeVer = new Map<string, number>(); // bumped whenever a path's tracked state is re-recorded
+  let verSeq = 0;
+  const resolutions = new Map<string, "kept" | "undone">();
+  const editedByStudent = new Set<string>(); // saved by the student while the agent's change was still pending
+  const initialPaths = new Set<string>(); // every file present when tracking started (to spot new big/binary files)
+  let conflicts = $state<Set<string>>(new Set()); // tab ids: unsaved edits AND the file changed on disk meanwhile
   let changes = $state<Record<string, Change>>({});
   const changeList = $derived(Object.entries(changes).sort((a, b) => a[0].localeCompare(b[0])));
   const baseline = new Map<string, string | null>(); // null = file did not exist when we started watching
@@ -232,8 +240,9 @@
     const d = diffLines(base ?? "", cur ?? "");
     const { add, del } = statOf(d);
     const next = { ...changes };
-    if (base === cur || (add === 0 && del === 0)) delete next[path];
-    else next[path] = { status: cur === null ? "deleted" : base === null ? "added" : "modified", add, del };
+    changeVer.set(path, ++verSeq);
+    if (base === cur || (add === 0 && del === 0)) { delete next[path]; editedByStudent.delete(path); }
+    else { next[path] = { status: cur === null ? "deleted" : base === null ? "added" : "modified", add, del }; resolutions.delete(path); }
     changes = next;
   }
   async function trackChanges() {
@@ -248,10 +257,21 @@
       if (!baseline.has(e.path)) baseline.set(e.path, null);
       curCache.set(e.path, body.content);
       recordChange(e.path, baseline.get(e.path) ?? null, body.content);
-      // an open, clean tab follows the disk
-      const t = edTabs.find((x) => x.params.path === e.path);
-      if (t && t.id === activeEd && !dirtyIds.has(t.id)) await syncActiveEditor();
+      followDisk(e.path, body.content); // open tabs follow the disk (clean ones update, dirty ones are flagged)
     });
+    // Too large or binary to diff: a NEW such file, or one that grew past the limit, is still a change we can undo.
+    for (const e of tree) {
+      if (e.type !== "file" || trackable(e)) continue;
+      const sig = `${e.size}:${e.mtime}`;
+      if (!baselineReady) { initialPaths.add(e.path); sigs.set(e.path, sig); continue; }
+      if (sigs.get(e.path) === sig) continue;
+      sigs.set(e.path, sig);
+      const b = baseline.has(e.path) ? baseline.get(e.path) : initialPaths.has(e.path) ? undefined : null;
+      if (b === undefined) continue; // existed before, no earlier copy: nothing to compare or restore
+      changeVer.set(e.path, ++verSeq); resolutions.delete(e.path);
+      changes = { ...changes, [e.path]: { status: b === null ? "added" : "modified", add: 0, del: 0, opaque: true } };
+    }
+    if (!baselineReady) for (const e of tree) if (e.type === "file") initialPaths.add(e.path);
     if (baselineReady) {
       for (const [p, b] of baseline) {
         if (!all.has(p) && b !== null && !changes[p]) { curCache.delete(p); recordChange(p, b, null); }
@@ -284,20 +304,34 @@
     if (st.status === "deleted") baseline.delete(path);
     else baseline.set(path, curCache.get(path) ?? (await fetchFile(path))?.content ?? "");
     const n = { ...changes }; delete n[path]; changes = n;
+    resolutions.set(path, "kept"); editedByStudent.delete(path);
   }
+  // One question at a time: "this will also discard your own edits" (used by Undo from the Changes tab AND from chat cards).
+  let discardAsk = $state<{ path: string; reason: "unsaved" | "saved"; resolve: (ok: boolean) => void } | null>(null);
+  const askDiscard = (path: string, reason: "unsaved" | "saved") => new Promise<boolean>((resolve) => { discardAsk = { path, reason, resolve }; });
+  function answerDiscard(ok: boolean) { const a = discardAsk; discardAsk = null; a?.resolve(ok); }
+  const reverting = new Set<string>();
   async function revertChange(path: string) {
-    const st = changes[path];
-    if (!st) return;
-    const b = baseline.get(path) ?? null;
-    const r = b === null
-      ? await fetch(`${API}/api/playgrounds/${id}/files?path=${encodeURIComponent(path)}`, { method: "DELETE" })
-      : await fetch(`${API}/api/playgrounds/${id}/files/content`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, content: b }) });
-    if (!r.ok) { showToast(`could not revert ${path}`); return; }
-    if (b === null) baseline.delete(path);
-    sigs.delete(path); curCache.delete(path);
-    const n = { ...changes }; delete n[path]; changes = n;
-    await refreshTree();
-    await reloadEditors();
+    if (!changes[path] || reverting.has(path)) return; // already resolved elsewhere (card vs Changes tab): never apply twice
+    reverting.add(path);
+    try {
+      const tab = edTabs.find((t) => t.params.path === path);
+      const reason = tab && dirtyIds.has(tab.id) ? "unsaved" : editedByStudent.has(path) ? "saved" : null;
+      if (reason && !(await askDiscard(path, reason))) return;
+      const st = changes[path];
+      if (!st) return;
+      const b = baseline.get(path) ?? null;
+      const r = b === null
+        ? await fetch(`${API}/api/playgrounds/${id}/files?path=${encodeURIComponent(path)}`, { method: "DELETE" })
+        : await fetch(`${API}/api/playgrounds/${id}/files/content`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, content: b }) });
+      if (!r.ok) { showToast(`could not revert ${path}`); return; }
+      if (b === null) baseline.delete(path);
+      sigs.delete(path); curCache.delete(path);
+      const n = { ...changes }; delete n[path]; changes = n;
+      resolutions.set(path, "undone"); editedByStudent.delete(path);
+      await refreshTree();
+      await reloadEditorFor(path);
+    } finally { reverting.delete(path); }
   }
   async function keepAll() { for (const [p] of changeList) await keepChange(p); }
   let confirmRevertAll = $state(false);
@@ -313,6 +347,7 @@
     const n = new Set(openCards);
     if (n.has(path)) { n.delete(path); openCards = n; return; }
     n.add(path); openCards = n;
+    if (changes[path]?.opaque) return; // no line diff for big/binary files
     const cur = changes[path]?.status === "deleted" ? "" : (curCache.get(path) ?? (await fetchFile(path))?.content ?? "");
     cardDiffs = { ...cardDiffs, [path]: withContext(diffLines(baseline.get(path) ?? "", cur)) };
   }
@@ -326,6 +361,21 @@
       if (cur !== undefined) cardDiffs[p] = withContext(diffLines(baseline.get(p) ?? "", cur));
     }
   });
+
+  // What the chat's edit cards use: the same change list, Keep and Undo as the Changes tab (see lib/agent/edits.ts).
+  const editHost: EditHost = {
+    change: (p) => changes[p],
+    resolution: (p) => resolutions.get(p),
+    version: (p) => changeVer.get(p) ?? 0,
+    versions: () => new Map(changeVer),
+    hasBaseline: (p) => baseline.has(p),
+    syncNow: async () => { for (let i = 0; i < 60 && refreshing; i++) await new Promise((r) => setTimeout(r, 50)); await refreshTree(); },
+    flushSaves: () => flushSaves(),
+    keep: (p) => keepChange(p),
+    undo: (p) => revertChange(p),
+    viewDiff: async (p) => { centerView = "changes"; if (!openCards.has(p)) await toggleCard(p); },
+    openFile: (p) => openFile(p),
+  };
 
   // --- views, quick open, project search ---
   let centerView = $state<"code" | "preview" | "changes">(shell === "chat" ? "preview" : "code");
@@ -437,7 +487,26 @@
       void activateEditor(next?.id ?? null);
     } else persistLayout();
   }
-  async function saveFile(tabId: string | null = activeEd) {
+  const inflightSaves = new Set<Promise<void>>();
+  function saveFile(tabId: string | null = activeEd): Promise<void> {
+    const p = saveFileNow(tabId).finally(() => inflightSaves.delete(p));
+    inflightSaves.add(p);
+    return p;
+  }
+  /** Everything the student typed is on disk when this resolves (the agent reads from disk). A tab whose file the
+   *  agent changed meanwhile is NOT flushed: that would silently overwrite the agent's version; the student decides. */
+  async function flushSaves() {
+    if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+    const skipped: string[] = [];
+    for (const t of edTabs) {
+      if (!dirtyIds.has(t.id)) continue;
+      if (conflicts.has(t.id)) { skipped.push(t.title); continue; }
+      await saveFile(t.id);
+    }
+    await Promise.all([...inflightSaves]);
+    if (skipped.length) showToast(`not saved: ${skipped.join(", ")} changed on disk while you were editing. Save it yourself to overwrite.`);
+  }
+  async function saveFileNow(tabId: string | null) {
     if (!tabId || !view) return;
     const tab = tabs.find((t) => t.id === tabId);
     if (!tab) return;
@@ -455,23 +524,38 @@
       // your own edits are accepted: only changes made outside the editor are flagged
       const p = tab.params.path as string;
       if (baselineReady && !changes[p]) baseline.set(p, content);
+      else if (changes[p]) editedByStudent.add(p); // the pending change now includes the student's own edits
       curCache.set(p, content);
       void refreshTree();
     }
   }
-  /** Pull in changes made outside the editor (terminal, agent) for clean tabs. */
-  async function syncActiveEditor() {
-    if (!activeEd || !view || dirtyIds.has(activeEd) || !openPath) return;
-    const tabId = activeEd;
-    const body = await fetchFile(openPath);
-    if (!body || tabId !== activeEd || dirtyIds.has(tabId)) return;
-    if (body.content !== savedContent.get(tabId) && body.content !== view.state.doc.toString()) {
+  /** Pull in a change made outside the editor (terminal, agent). Clean tabs, active or not, take the disk version;
+   *  a tab with unsaved edits is never overwritten: it is flagged as a conflict and the banner explains. */
+  function followDisk(path: string, content: string) {
+    const t = edTabs.find((x) => x.params.path === path);
+    if (!t) return;
+    if (dirtyIds.has(t.id)) { if (content !== savedContent.get(t.id) && !conflicts.has(t.id)) conflicts = new Set([...conflicts, t.id]); return; }
+    if (content === savedContent.get(t.id)) return;
+    savedContent.set(t.id, content);
+    if (t.id === activeEd && view) {
+      if (content === view.state.doc.toString()) return;
       suppressDirty = true;
-      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: body.content } });
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: content } });
       suppressDirty = false;
       fileNotice = "updated from disk";
-    }
-    savedContent.set(tabId, body.content);
+    } else edStates.set(t.id, mkState(content, path));
+  }
+  /** Reload one tab from disk (after Undo). Other tabs, and their unsaved edits, are left alone. */
+  async function reloadEditorFor(path: string) {
+    const t = edTabs.find((x) => x.params.path === path);
+    if (!t) return;
+    const body = await fetchFile(path);
+    if (!body) { closeEditor(t.id, true); return; }
+    const st = mkState(body.content, path);
+    edStates.set(t.id, st);
+    savedContent.set(t.id, body.content);
+    setDirty(t.id, false);
+    if (t.id === activeEd) showState(st);
   }
   async function reloadEditors() {
     const current = activeEd;
@@ -1214,6 +1298,7 @@
           {@const c = changes[openPath]}
           <div class="banner">
             <span><b>{c.status === "added" ? "New file" : c.status === "deleted" ? "Deleted" : "Changed outside the editor"}</b> <span class="mono">{#if c.add}<span class="pl">+{c.add}</span>{/if} {#if c.del}<span class="mi">−{c.del}</span>{/if}</span></span>
+            {#if activeEd && conflicts.has(activeEd)}<span class="conf" data-testid="edit-conflict">You have unsaved edits and this file changed on disk. Your edits are kept and not auto-saved; saving overwrites the changed version.</span>{/if}
             <span class="bactions"><button class="primary" onclick={() => { centerView = "changes"; if (!openCards.has(openPath!)) void toggleCard(openPath!); }}>Review diff</button><button onclick={() => keepChange(openPath!)}>Keep</button><button onclick={() => revertChange(openPath!)}>Revert</button></span>
           </div>
         {/if}
@@ -1274,6 +1359,7 @@
                   <button onclick={() => keepChange(p)}>Keep</button><button onclick={() => revertChange(p)}>Revert</button>
                 </span>
               </div>
+              {#if openCards.has(p) && c.opaque}<div class="dbody mono"><div class="dline gap">No line diff for this file (binary or large). Keep accepts it; Revert {c.status === "added" ? "deletes it" : "restores the earlier copy"}.</div></div>{/if}
               {#if openCards.has(p) && cardDiffs[p]}
                 <div class="dbody mono">
                   {#each cardDiffs[p] as l}
@@ -1368,6 +1454,15 @@
     <button class="mini" onclick={async () => { const t = pendingClose!; pendingClose = null; await saveFile(t); closeEditor(t, true); }}>save</button>
     <button class="mini ghost" onclick={() => { const t = pendingClose!; pendingClose = null; closeEditor(t, true); }}>discard</button>
     <button class="mini ghost" onclick={() => (pendingClose = null)}>cancel</button>
+  </div>
+{/if}
+{#if discardAsk}
+  <div class="modal-veil" role="presentation" onclick={() => answerDiscard(false)}></div>
+  <div class="modal" role="dialog" aria-label="discard your edits" data-testid="discard-ask">
+    <b>You changed this file too</b>
+    <p>{discardAsk.path} has {discardAsk.reason === "unsaved" ? "unsaved edits of yours in the editor" : "edits you saved after the agent changed it"}. Undoing puts the file back to how it was before the agent's change, so those edits are lost too.</p>
+    <button class="mini" onclick={() => answerDiscard(true)}>Undo anyway</button>
+    <button class="mini ghost" onclick={() => answerDiscard(false)}>Cancel</button>
   </div>
 {/if}
 {#if chooser || tabMenu}<div class="menu-veil" role="presentation" onclick={() => { chooser = null; tabMenu = null; }}></div>{/if}
@@ -1482,6 +1577,7 @@
   .d{width:7px;height:7px;border-radius:50%}.d.dirty{background:var(--text)}.d.chg{background:var(--accent)}
   .edx{background:none;border:0;color:var(--faint);font-size:15px;padding:0 9px;cursor:pointer}.edx:hover{color:var(--text)}
   .notab{padding:0 14px;align-self:center;font-size:12.5px;color:var(--muted)}
+  .conf{flex-basis:100%;color:var(--warn);font-size:12.5px}
   .banner{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 14px;background:var(--accent-soft);border-bottom:1px solid var(--border);font-size:13px;flex:none;flex-wrap:wrap}
   .pl{color:var(--ok)}.mi{color:var(--danger)}
   .bactions{display:inline-flex;gap:8px;margin-left:auto}

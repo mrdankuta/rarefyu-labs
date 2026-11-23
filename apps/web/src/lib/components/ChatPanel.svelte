@@ -2,6 +2,8 @@
   import { tick } from "svelte";
   import type { ChatController } from "$lib/agent/chat.svelte";
   import { renderMarkdown } from "$lib/agent/markdown";
+  import { buildCards, lastAssistantIds, turnsOf, type Card } from "$lib/agent/edits";
+  import EditCards from "./EditCards.svelte";
 
   let { ctl }: { ctl: ChatController } = $props();
   let draft = $state("");
@@ -10,6 +12,22 @@
 
   const ready = $derived(ctl.phase === "ready");
   const busy = $derived(ctl.chat.running);
+  // Edit cards: drawn under the last assistant message of each finished turn.
+  const cardsAt = $derived.by(() => {
+    const out = new Map<string, Card[]>();
+    const host = ctl.host;
+    if (!host) return out;
+    const changed = new Map(Object.entries(ctl.turnChanged).map(([k, v]) => [Number(k), v]));
+    const turns = turnsOf(ctl.chat.messages);
+    const byTurn = buildCards(turns, changed, host);
+    const last = lastAssistantIds(ctl.chat.messages);
+    for (const [turn, cards] of byTurn) {
+      if (busy && turn === turns.length - 1) continue; // still working: files may still change
+      const id = last.get(turn);
+      if (id) out.set(id, cards);
+    }
+    return out;
+  });
   const empty = $derived(ctl.chat.messages.length === 0);
 
   function onScroll() {
@@ -71,6 +89,7 @@
               </div>
             {/if}
           {/each}
+          {#if ctl.host && cardsAt.get(m.id)}<EditCards host={ctl.host} cards={cardsAt.get(m.id)!} locked={busy} />{/if}
         </div>
       {:else if m.kind === "stopped"}
         <div class="note stopped">Stopped. You can send a new message.</div>
