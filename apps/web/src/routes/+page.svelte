@@ -77,7 +77,7 @@
 
 <div class="page">
   <header class="hdr">
-    <span class="brand"><span class="logo">R</span><span class="title">RarefyU AI Build Lab</span></span>
+    <span class="brand"><span class="logo" role="img" aria-label="Rarefy Technologies"><img class="mk mk-dark" src="/brand/rtech-icon-secondary.svg" alt="" /><img class="mk mk-light" src="/brand/rtech-icon-primary.svg" alt="" /></span><span class="title">AI Build Lab</span><span class="by">by Rarefy Technologies</span></span>
     <button class="theme" type="button" aria-label="switch to {theme === 'dark' ? 'light' : 'dark'} mode" onclick={() => (theme = toggleTheme())}>{theme === "dark" ? "☀ Light" : "☾ Dark"}</button>
   </header>
   <main>
@@ -167,7 +167,7 @@
   .page{min-height:100vh;background:var(--bg);color:var(--text);font-family:var(--sans)}
   .hdr{display:flex;align-items:center;justify-content:space-between;padding:24px clamp(20px,5vw,64px)}
   .brand{display:flex;align-items:center;gap:12px}
-  .logo{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:var(--text);color:var(--bg);font-family:var(--display);font-weight:700;font-size:18px}
+  .logo{display:block;height:30px}.by{font-size:13px;color:var(--muted);margin-left:2px}
   .title{font-family:var(--display);font-weight:600;font-size:17px}
   .theme{height:34px;padding:0 14px;border-radius:99px;border:1px solid var(--border);background:var(--surface);color:var(--text);font:500 13px var(--sans);cursor:pointer}
   main{display:flex;align-items:center;gap:72px;padding:12px clamp(20px,5vw,64px) 56px;max-width:1280px;margin:0 auto;flex-wrap:wrap}
@@ -197,17 +197,17 @@
   .card p{margin:0 0 14px;color:var(--muted)}.meta{font-size:13px}
   .lessons{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
   .foot{font-size:13px}.foot a{color:var(--muted)}
-  .win{width:100%;max-width:560px;height:440px;border-radius:16px;background:#0f1319;box-shadow:var(--shadow),0 0 0 1px var(--border);overflow:hidden;display:flex;flex-direction:column;color:#c9d1e0}
-  .wbar{height:38px;background:#171c25;display:flex;align-items:center;padding:0 14px;gap:8px;flex:none}
-  .wbar i{width:10px;height:10px;border-radius:50%;background:#3a4352}
+  .win{width:100%;max-width:560px;height:440px;border-radius:16px;background:#051a22;box-shadow:var(--shadow),0 0 0 1px var(--border);overflow:hidden;display:flex;flex-direction:column;color:#c9d1e0}
+  .wbar{height:38px;background:#0c2531;display:flex;align-items:center;padding:0 14px;gap:8px;flex:none}
+  .wbar i{width:10px;height:10px;border-radius:50%;background:#2b4a58}
   .wbar .path{margin-left:14px;font:12px var(--mono);color:#8a93a3}
   .wbar .chip{margin-left:auto;font-size:11px;color:#6ee7b7;background:rgba(18,160,110,.16);padding:3px 9px;border-radius:99px}
   .wbody{display:flex;flex:1;min-height:0}
-  .wside{width:128px;background:#121720;padding:12px 10px;font:12px var(--mono);color:#9aa4b5;display:flex;flex-direction:column;gap:7px;flex:none}
-  .wside b{font-size:10px;letter-spacing:.08em;color:#5d6778}.wside .sel{padding-left:12px;color:#fff;background:#1e2530;border-radius:4px}
+  .wside{width:128px;background:#08202b;padding:12px 10px;font:12px var(--mono);color:#9aa4b5;display:flex;flex-direction:column;gap:7px;flex:none}
+  .wside b{font-size:10px;letter-spacing:.08em;color:#5d6778}.wside .sel{padding-left:12px;color:#fff;background:#12303d;border-radius:4px}
   .wmain{flex:1;min-width:0;display:flex;flex-direction:column}
   .wcode,.wterm{margin:0;font:12.5px/1.75 var(--mono);overflow:hidden}
-  .wcode{flex:1;padding:14px 16px}.wterm{height:140px;background:#0a0d12;border-top:1px solid #1e2530;padding:10px 16px;font-size:12px;color:#9aa4b5}
+  .wcode{flex:1;padding:14px 16px}.wterm{height:140px;background:#04141b;border-top:1px solid #12303d;padding:10px 16px;font-size:12px;color:#9aa4b5}
   .wcode .c{color:#8a93a3}.wcode .k{color:#c792ea}.wcode .s{color:#c3e88d}.wcode .f{color:#82aaff}.wterm .ok{color:#6ee7b7}
   @media (max-width:900px){.right{display:none}main{gap:32px}}
 </style>

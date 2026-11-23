@@ -622,7 +622,7 @@
       XTerm = Terminal; FitAddonCls = FitAddon;
       await import("@xterm/xterm/css/xterm.css");
     }
-    const term = new XTerm({ fontFamily: '"Source Code Pro",ui-monospace,Menlo,monospace', fontSize, theme: { background: "#0a0e13", foreground: "#d5dce8", cursor: "#5b7cfa" } });
+    const term = new XTerm({ fontFamily: '"Source Code Pro",ui-monospace,Menlo,monospace', fontSize, theme: { background: "#051a22", foreground: "#d5dce8", cursor: "#f7d602" } });
     const fit = new FitAddonCls();
     term.loadAddon(fit);
     term.open(el);
@@ -1038,7 +1038,7 @@
 <div class="win" style:--edfs="{fontSize + 1}px">
   <header class="hdr">
     <div class="l">
-      <span class="logo">R</span>
+      <a class="logo" href="/" aria-label="Rarefy Technologies"><img class="mk mk-dark" src="/brand/rtech-icon-secondary.svg" alt="" /><img class="mk mk-light" src="/brand/rtech-icon-primary.svg" alt="" /></a>
       <span class="crumb"><span class="mut">{hasLesson ? "Lesson" : "Playground"}</span><span class="sep">/</span><b>{id.slice(0, 8)}</b></span>
     </div>
     <div class="r">
@@ -1364,7 +1364,7 @@
   .hdr{display:flex;align-items:center;justify-content:space-between;gap:12px;height:56px;padding:0 18px;background:var(--surface);border-bottom:1px solid var(--border);flex:none}
   .hdr .l,.hdr .r{display:flex;align-items:center;gap:10px;min-width:0}
   .hdr .r{flex-wrap:nowrap;overflow:hidden}
-  .logo{display:grid;place-items:center;width:32px;height:32px;border-radius:9px;background:var(--text);color:var(--bg);font-family:var(--display);font-weight:700;font-size:17px;flex:none}
+  .logo{display:block;height:26px;flex:none}
   .crumb{display:flex;gap:8px;font-size:14.5px;white-space:nowrap}.crumb .sep{color:var(--faint)}
   .timer{font:13px var(--mono);color:var(--muted);white-space:nowrap}.timer.urgent{color:var(--danger);font-weight:700}
   .confirm-inline{font-size:13px;white-space:nowrap}
@@ -1459,6 +1459,9 @@
   .code :global(.cm-editor){height:100%}
   .code :global(.cm-editor .cm-scroller),.code :global(.cm-editor .cm-content){font-size:var(--edfs,14px)}
   .code :global(.cm-editor.cm-focused){outline:none}
+  .code :global(.cm-editor),.code :global(.cm-gutters){background:var(--surface)!important}
+  .code :global(.cm-activeLine),.code :global(.cm-activeLineGutter){background:var(--accent-soft)!important}
+  .code :global(.cm-cursor){border-left-color:var(--accent)!important}
 
   /* changes */
   .chead{display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--border);font-size:13.5px;flex:none;flex-wrap:wrap}
@@ -1482,24 +1485,24 @@
 
   /* right: terminals */
   .right{background:var(--term-bg);border-color:var(--border)}
-  .rtabs{display:flex;align-items:center;gap:2px;height:38px;padding:0 8px;flex:none;border-bottom:1px solid #1e2530;overflow-x:auto}
+  .rtabs{display:flex;align-items:center;gap:2px;height:38px;padding:0 8px;flex:none;border-bottom:1px solid #12303d;overflow-x:auto}
   .tabwrap{display:inline-flex;align-items:center;flex:none}
   .rt{height:38px;padding:0 12px;background:none;border:0;border-bottom:2px solid transparent;color:#7b8697;font:500 12.5px var(--sans);cursor:pointer;white-space:nowrap}
   .rt.on{color:#f2f5fa;border-bottom-color:var(--accent)}
   .tabmenu{border:0;background:transparent;color:#7b8697;font-size:15px;cursor:pointer;padding:0 4px}
-  .tabedit{height:26px;border:1px solid var(--accent);border-radius:6px;padding:0 8px;font-size:12.5px;width:110px;background:#10151c;color:#f2f5fa}
+  .tabedit{height:26px;border:1px solid var(--accent);border-radius:6px;padding:0 8px;font-size:12.5px;width:110px;background:#0a232d;color:#f2f5fa}
   .add{border:0;background:transparent;color:#7b8697;width:30px;height:30px;font-size:18px;cursor:pointer;flex:none}
   .rpane{flex:1;min-height:0;display:none}.rpane.on{display:flex;flex-direction:column}
   .termbar{display:flex;align-items:center;gap:10px;padding:4px 12px;font-size:11.5px;color:#7b8697;flex:none}
   .termbar .tip{margin-left:auto}.termbar code{color:#a9b4c6}
-  .termbar button{background:none;border:1px solid #2a3341;color:#a9b4c6;border-radius:6px;cursor:pointer;font-size:12px;padding:1px 8px}
+  .termbar button{background:none;border:1px solid #1b4152;color:#a9b4c6;border-radius:6px;cursor:pointer;font-size:12px;padding:1px 8px}
   .termbar button.alert{border-color:var(--danger);color:var(--danger)}
   .tstate.connected{color:#34d399}.tstate.disconnected{color:#f87171}.tstate.connecting{color:#fbbf24}
   .termwrap{flex:1;min-height:0;padding:4px 10px 10px}.termwrap :global(.xterm){height:100%}
-  .right .urlbar{background:#10151c;border-color:#1e2530}.right .prev{color:#93a0b4;border-color:#2a3341}
+  .right .urlbar{background:#0a232d;border-color:#12303d}.right .prev{color:#93a0b4;border-color:#1b4152}
   .agent{padding:14px;font-size:13px;overflow:auto;color:#d5dce8}
-  .apolicy{background:#1a2230;border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12.5px}
-  .abtn{background:#2a3341;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-weight:600;cursor:pointer;margin:4px 4px 4px 0}
+  .apolicy{background:#12303d;border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12.5px}
+  .abtn{background:#1b4152;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-weight:600;cursor:pointer;margin:4px 4px 4px 0}
   .abtn.ok{background:#16a34a}.abtn.no{background:#7f1d1d}
   .approve{border:1px solid var(--warn);border-radius:8px;padding:8px 10px;margin-top:8px;font-size:12.5px}
   .trace{font:11.5px var(--mono);color:#a5b4fc;margin-top:6px;word-break:break-word}.trace.bad{color:#fca5a5}
