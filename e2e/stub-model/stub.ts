@@ -10,6 +10,7 @@
  *   [[bash]]      ask for a `bash` call (`echo stub-bash-ok`), then a final text reply
  *   [[longout]]   ask for a `bash` call printing 120 lines, then a final text reply
  *   [[longerr]]   ask for a `bash` call that prints 80 lines to stderr and exits 1, then a final text reply
+ *   [[site:TEXT]] ask for a `write` tool call that writes index.html (`<h1 id="t">TEXT</h1>` plus a tall spacer), then a final text reply
  *   [[401]] [[429]] [[500]]   respond with that HTTP status and a provider-style JSON error body
  * Every request is recorded in `requests` (authorization header + body) for assertions.
  */
@@ -34,6 +35,8 @@ function lastUserText(messages: any[]): string {
 }
 
 function toolFor(text: string): { name: string; args: object } | null {
+  const site = /\[\[site:([^\]]*)\]\]/.exec(text);
+  if (site) return { name: "write", args: { path: "index.html", content: `<!doctype html><html><body><h1 id="t">${site[1]}</h1><div style="height:3000px"></div><p id="end">bottom</p></body></html>\n` } };
   if (text.includes("[[tool]]")) return { name: "write", args: { path: "hello.txt", content: "hello from the stub\n" } };
   if (text.includes("[[outside]]")) return { name: "write", args: { path: "/tmp/rfy-outside-stub.txt", content: "outside\n" } };
   if (text.includes("[[bash]]")) return { name: "shell", args: { command: "echo stub-bash-ok", description: "Echo" } };
@@ -82,7 +85,7 @@ export function startStub(port = 0): Promise<{ port: number; url: string; reques
       send(chunk({}, "stop", { usage: { prompt_tokens: 10, completion_tokens: 60, total_tokens: 70 } }));
     } else {
       const reply = afterTool
-        ? (text.includes("[[tool]]") ? "I created hello.txt for you." : "All done with the tool step.")
+        ? (/\[\[site:/.test(text) ? "I updated index.html for you." : text.includes("[[tool]]") ? "I created hello.txt for you." : "All done with the tool step.")
         : "Hello from the stub model. Here is **bold** text and a code block:\n\n```js\nconsole.log('hi')\n```\n";
       for (const w of reply.match(/\S+\s*/g) ?? []) { send(chunk({ content: w })); await sleep(20); }
       send(chunk({}, "stop", { usage: { prompt_tokens: 10, completion_tokens: 12, total_tokens: 22 } }));

@@ -25,6 +25,8 @@ import { reconcile } from "./reconcile";
 import { auditEvent } from "./teach";
 import { lookupSnapshot, retireWorkspace, runLifecycle } from "./lifecycle";
 import { PREVIEW_TTL_SEC, signPreview } from "./preview";
+import { AGENT_RULES_FILE, agentRules } from "./agent-rules";
+import { ensurePreview } from "./preview-start";
 import { resolvePreviewTarget } from "./preview-proxy";
 import { AgentServers } from "./agent-server";
 import { agentRoutes } from "./agent-proxy";
@@ -237,7 +239,8 @@ app.post("/api/playgrounds", async (c) => {
     // Provision exec workspace (warm-claim path lands here in the gVisor driver).
     noteProvisionStart(rec.id);
     try {
-      await driver.create(rec.id);
+      // Every new workspace starts with the agent instruction file (never overwriting an existing one).
+      await driver.create(rec.id, { seedFiles: [{ path: AGENT_RULES_FILE, content: agentRules(await driver.previewPort(rec.id)) }] });
     } catch (err) {
       noteProvisionErr();
       throw err;
@@ -559,6 +562,22 @@ app.get("/api/playgrounds/:id/preview", async (c) => {
   if (!ready) return c.json({ ready: false, port, hint: `waiting for :${port} — start your app, this pane goes live` });
   const token = signPreview(rec.id, port);
   return c.json({ ready: true, port, url: `/preview/${token}/`, expiresInSec: PREVIEW_TTL_SEC });
+});
+
+// Chat layout: make sure a web project is being served (starts it through the driver's terminal when it is
+// not and the project is a web project). Non-web workspaces get {state:"not-web"} and nothing is started.
+app.post("/api/playgrounds/:id/preview/ensure", async (c) => {
+  const rec = getPlayground(c.req.param("id"));
+  if (!rec || rec.status === "destroyed") return c.json({ error: "playground not found" }, 404);
+  const body = (await c.req.json().catch(() => ({}))) as { retry?: unknown };
+  try {
+    const st = await ensurePreview(rec.id, { retry: body.retry === true });
+    if (st.state !== "ready") return c.json(st);
+    const token = signPreview(rec.id, st.port);
+    return c.json({ ...st, url: `/preview/${token}/`, expiresInSec: PREVIEW_TTL_SEC });
+  } catch (err) {
+    return c.json({ error: `could not check the preview: ${(err as Error).message}` }, 502);
+  }
 });
 
 // Proxied app bytes. Token in path so iframes need no headers. (WebSocket upgrades: see server.ts.)

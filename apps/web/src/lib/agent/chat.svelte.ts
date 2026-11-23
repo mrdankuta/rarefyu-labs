@@ -37,6 +37,9 @@ export class ChatController {
   /** The one status line: Working / Reconnecting… / Agent stopped, restarting… / Agent unavailable [Restart]. */
   status = $derived(chatStatus({ phase: this.phase, conn: this.reconnecting ? "reconnecting" : "live", agent: this.agent, running: this.chat.running, pendingPermissions: this.chat.permissions.length }));
 
+  /** Called once when a live turn ends (succeeded, failed or interrupted), never per streamed token. The page refreshes the preview here. */
+  onTurnEnd: (() => void) | null = null;
+
   private client: AgentClient;
   private unsub: (ReturnType<AgentClient["subscribe"]>) | null = null;
   private starting: Promise<void> | null = null;
@@ -140,7 +143,9 @@ export class ChatController {
   private onEvent(ev: AgentEvent) {
     if (!this.sessionId || ev.data?.sessionID !== this.sessionId) return;
     if (this.syncing) this.dirty = true;
+    const was = this.chat.running;
     applyEvent(this.chat, ev);
+    if (was && !this.chat.running) this.onTurnEnd?.();
     // a turn that straddled a reconnect: settle the final text from history, which is authoritative
     if (this.needsFinalSync && /^session\.execution\.(succeeded|failed|interrupted)$/.test(ev.type)) {
       this.needsFinalSync = false;

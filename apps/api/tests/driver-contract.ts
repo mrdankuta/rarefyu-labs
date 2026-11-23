@@ -50,6 +50,38 @@ export function driverContract(name: string, make: () => ExecDriver, opts?: { sk
       expect(files.some((f) => f.path === "README.md")).toBe(true);
     });
 
+    t("create seeds starter files once, never overwrites, and they are part of the starter baseline", async () => {
+      const id = sid("seed");
+      await d.create(id, { seedFiles: [{ path: "AGENTS.md", content: "# rules\nline two\n" }, { path: "docs/note.txt", content: "n" }] });
+      expect((await d.readFile(id, "AGENTS.md")).content).toBe("# rules\nline two\n");
+      expect((await d.readFile(id, "docs/note.txt")).content).toBe("n");
+      expect(await d.diffFile(id, "AGENTS.md")).toBe(""); // seeded before the snapshot: not a student change
+      // a later create (wake, reattach) with different seeds changes nothing
+      await d.writeFile(id, "AGENTS.md", "student edit\n");
+      await d.create(id, { seedFiles: [{ path: "AGENTS.md", content: "other" }] });
+      expect((await d.readFile(id, "AGENTS.md")).content).toBe("student edit\n");
+      await d.resetProject(id);
+      expect((await d.readFile(id, "AGENTS.md")).content).toBe("# rules\nline two\n"); // reset keeps the file
+    });
+
+    t("create does not overwrite a seed target that already exists", async () => {
+      const id = sid("seedkeep");
+      await d.create(id);
+      await d.writeFile(id, "AGENTS.md", "mine\n");
+      const id2 = sid("seedkeep2");
+      await d.create(id2, { seedFiles: [{ path: "AGENTS.md", content: "ours" }] });
+      expect((await d.readFile(id, "AGENTS.md")).content).toBe("mine\n");
+      await expect(d.create(sid("seedbad"), { seedFiles: [{ path: "../escape", content: "x" }] })).rejects.toThrow();
+    });
+
+    t("previewPort is stable per workspace", async () => {
+      const id = sid("pp");
+      await d.create(id);
+      const p = await d.previewPort(id);
+      expect(Number.isInteger(p) && p > 0 && p < 65536).toBe(true);
+      expect(await d.previewPort(id)).toBe(p);
+    });
+
     t("injectCredentials writes private home files that survive in the workspace", async () => {
       const id = sid("creds");
       await d.create(id);

@@ -2,7 +2,7 @@ import { walkArgs, parseWalk } from "./walk";
 import { frameFiles, parseTransferResult, type ImportInput, type TransferResult } from "../transfer";
 import { assertHomeRel, resolveInside } from "./paths";
 import { agentServerConfigJson } from "../agent-policy";
-import type { DriverCapabilities, ExecDriver, Isolation, TerminalHandle, WorkspaceAddress } from "./types";
+import type { CreateOpts, DriverCapabilities, ExecDriver, Isolation, TerminalHandle, WorkspaceAddress } from "./types";
 
 const HOME = "/home/student";
 const WORKSPACE = `${HOME}/workspace`;
@@ -154,7 +154,11 @@ export class DockerDriver implements ExecDriver {
     await this.create(id);
   }
 
-  async create(sessionId: string) {
+  async previewPort(_sessionId: string): Promise<number> {
+    return 3000; // every workspace has its own network namespace
+  }
+
+  async create(sessionId: string, opts: CreateOpts = {}) {
     const st = await this.state(sessionId);
     if (st === "running") return { workspaceDir: WORKSPACE };
     if (st === "stopped") { await this.ensureRunning(sessionId); return { workspaceDir: WORKSPACE }; }
@@ -179,6 +183,16 @@ export class DockerDriver implements ExecDriver {
     if (run.exitCode !== 0) {
       await this.destroy(sessionId);
       throw new Error(`cannot start workspace: ${run.stderr.trim()}`);
+    }
+    for (const f of opts.seedFiles ?? []) {
+      assertHomeRel(f.path);
+      const w = await this.exec(sessionId, ["sh", "-c",
+        `[ -e "$1" ] || { mkdir -p "$(dirname "$1")" && cat > "$1"; }`, "sh", `${WORKSPACE}/${f.path}`,
+      ], { stdin: f.content, cwd: HOME });
+      if (w.exitCode !== 0) {
+        await this.destroy(sessionId);
+        throw new Error(`cannot seed ${f.path}: ${w.stderr.trim()}`);
+      }
     }
     // Seed workspace + starter snapshot (diff/reset baseline) before any learner edit.
     const seed = await this.exec(sessionId, ["sh", "-c",
