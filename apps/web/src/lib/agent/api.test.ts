@@ -27,10 +27,11 @@ describe("client paths and error handling", () => {
     expect(calls[1]!.url).toBe("/api/playgrounds/p1/agent/api/session/ses_1/prompt");
     expect(JSON.parse(calls[1]!.init!.body as string)).toEqual({ text: "hi" });
   });
-  test("history asks for oldest first; active ids filter to running", async () => {
-    const { c, calls } = mk((u) => Response.json(u.includes("/active") ? { data: { ses_a: { type: "running" }, ses_b: { type: "idle" } } } : { data: [{ id: "m" }] }));
-    await c.listMessages("ses_1");
-    expect(calls[0]!.url).toContain("order=asc");
+  test("history: newest page (server max limit is 200), returned oldest first; active ids filter to running", async () => {
+    const { c, calls } = mk((u) => Response.json(u.includes("/active") ? { data: { ses_a: { type: "running" }, ses_b: { type: "idle" } } } : { data: [{ id: "new" }, { id: "old" }] }));
+    expect((await c.listMessages("ses_1")).map((m) => m.id)).toEqual(["old", "new"]);
+    expect(calls[0]!.url).toContain("order=desc");
+    expect(calls[0]!.url).toContain("limit=200");
     expect([...(await c.activeSessionIds())]).toEqual(["ses_a"]);
   });
   test("HTTP failures carry status + agent state; fetch rejection is status 0", async () => {

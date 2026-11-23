@@ -97,7 +97,7 @@ describe("toolLabel", () => {
   test("long commands are clipped", () => expect(toolLabel("bash", { command: "x".repeat(300) }).length).toBeLessThan(90));
 });
 
-describe("stateFromMessages (history, order=asc)", () => {
+describe("stateFromMessages (history, oldest first)", () => {
   const hist = [
     { id: "u1", type: "user", text: "make a file", time: {} },
     { id: "a1", type: "assistant", content: [{ type: "tool", id: "c1", name: "write", state: { status: "completed", input: { path: "hello.txt" }, content: [] } }] },

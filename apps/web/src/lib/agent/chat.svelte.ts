@@ -13,7 +13,7 @@ export class ChatController {
   conn = $state<ConnState>("connecting");
   /** Blocking problem (agent cannot start / lost). Transcript errors live in chat.messages. */
   fatal = $state<UiError | null>(null);
-  /** Non-blocking: no class key is installed, so the agent would fall back to a limited free model. */
+  /** Non-blocking: this workspace has no class seat, so the agent would fall back to a limited free model. */
   noKey = $state(false);
   sessionId = $state<string | null>(null);
   loading = $state(false);
@@ -35,7 +35,10 @@ export class ChatController {
   private async boot() {
     this.phase = "starting"; this.fatal = null;
     try {
-      await this.client.ensure();
+      const st = await this.client.ensure();
+      // OpenCode silently falls back to a limited free model when no key is installed, so "no key" is not an
+      // error event: the API tells us whether this workspace has a class seat.
+      this.noKey = st.keyed === false;
     } catch (e) {
       this.fatal = mapRequestError(e, "start");
       this.phase = "failed";
@@ -47,7 +50,6 @@ export class ChatController {
       onReconnect: () => { void this.resync(); },
     });
     await this.restore();
-    void this.checkKey();
     this.phase = "ready";
   }
 
@@ -75,14 +77,6 @@ export class ChatController {
       if (this.sessionId !== id) return;
       this.chat = stateFromMessages(msgs, active.has(id));
     } catch { /* keep what we have; the stream will carry on */ }
-  }
-
-  private async checkKey() {
-    try {
-      const m = await this.client.defaultModel();
-      // The seat key makes a non-"opencode" provider the default; the built-in "opencode" one is the keyless free fallback.
-      this.noKey = !m || m.providerID === "opencode";
-    } catch { /* ignore: purely advisory */ }
   }
 
   private onEvent(ev: AgentEvent) {

@@ -8,9 +8,8 @@ import { AgentApiError } from "./errors";
 import type { AgentEvent } from "./events";
 
 export type AgentState = "stopped" | "starting" | "healthy" | "unhealthy";
-export interface AgentStatus { state: AgentState; version?: string }
+export interface AgentStatus { state: AgentState; version?: string; /** Server-side: this workspace has a class seat (model key). Never the key itself. */ keyed?: boolean }
 export interface SessionInfo { id: string; title?: string; time?: { created?: number; updated?: number } }
-export interface ModelRef { providerID: string; modelID: string }
 
 /** Endpoint paths relative to the per-workspace proxy base. */
 export const PATHS = {
@@ -21,7 +20,6 @@ export const PATHS = {
   interrupt: (id: string) => `/api/session/${encodeURIComponent(id)}/interrupt`,
   messages: (id: string) => `/api/session/${encodeURIComponent(id)}/message`,
   active: "/api/session/active",
-  defaultModel: "/api/model/default",
   events: "/api/event",
 } as const;
 
@@ -36,12 +34,10 @@ export interface AgentClient {
   /** Returns the id OpenCode gave the user message. */
   sendPrompt(sessionId: string, text: string): Promise<string>;
   interrupt(sessionId: string): Promise<void>;
-  /** Whole history, oldest first. */
+  /** The latest (up to 200) messages, oldest first. */
   listMessages(sessionId: string): Promise<any[]>;
   /** Session ids with a turn running right now. */
   activeSessionIds(): Promise<Set<string>>;
-  /** The model a new turn would use, or null. */
-  defaultModel(): Promise<ModelRef | null>;
   /** Subscribe to the server-wide event stream; reconnects with backoff. Returns an unsubscribe function. */
   subscribe(h: { onEvent(e: AgentEvent): void; onState(s: ConnState): void; onReconnect(): void }): () => void;
 }
@@ -97,14 +93,11 @@ export function createAgentClient(opts: { base: string; fetch?: typeof fetch }):
       return r.data.id;
     },
     async interrupt(sessionId) { await call(PATHS.interrupt(sessionId), json("POST", {})); },
-    async listMessages(sessionId) { return (await call<{ data: any[] }>(PATHS.messages(sessionId), { q: { order: "asc", limit: 500 } })).data ?? []; },
+    // The server caps `limit` at 200 (400 above that). Take the newest page and return it oldest-first.
+    async listMessages(sessionId) { return ((await call<{ data: any[] }>(PATHS.messages(sessionId), { q: { order: "desc", limit: 200 } })).data ?? []).reverse(); },
     async activeSessionIds() {
       const r = await call<{ data: Record<string, { type: string }> }>(PATHS.active);
       return new Set(Object.entries(r.data ?? {}).filter(([, v]) => v?.type === "running").map(([k]) => k));
-    },
-    async defaultModel() {
-      const r = await call<{ data: { providerID: string; modelID: string } | null }>(PATHS.defaultModel);
-      return r.data ? { providerID: r.data.providerID, modelID: r.data.modelID } : null;
     },
     subscribe(h) {
       let stopped = false;

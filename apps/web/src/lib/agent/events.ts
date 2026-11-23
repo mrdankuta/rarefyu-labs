@@ -154,7 +154,7 @@ export function applyEvent(st: ChatState, ev: AgentEvent): void {
 }
 
 // --- history --------------------------------------------------------------------------------------------------
-/** Rebuild UI state from `GET /api/session/:id/message?order=asc` (oldest first). */
+/** Rebuild UI state from `GET /api/session/:id/message?order=desc` (oldest first). */
 export function stateFromMessages(msgs: any[], running = false): ChatState {
   const st = newChatState();
   st.running = running;
