@@ -7,6 +7,8 @@
   import { env } from "$env/dynamic/public";
   import { readStoredLayout, resolveLayout, storeLayout, forcedClassic, type ShellLayout } from "$lib/layout";
   import { diffLines, statOf, withContext, type DiffLine } from "$lib/diff";
+  import { ChatController } from "$lib/agent/chat.svelte";
+  import ChatPanel from "$lib/components/ChatPanel.svelte";
   import { EditorState, Compartment } from "@codemirror/state";
   import { EditorView, keymap } from "@codemirror/view";
   import { basicSetup } from "codemirror";
@@ -35,6 +37,12 @@
   const layoutForced = forcedClassic(env.PUBLIC_DEFAULT_LAYOUT);
   let shell = $state<ShellLayout>(resolveLayout(readStoredLayout(), env.PUBLIC_DEFAULT_LAYOUT));
   let drawer = $state<"files" | "terminal" | null>(null);
+  // Agent chat: created and started the first time the Chat layout is shown (never in a Classic-only session),
+  // then kept for the life of the page so switching layouts neither drops the conversation nor reconnects.
+  let chatCtl = $state<ChatController | null>(null);
+  $effect(() => {
+    if (shell === "chat" && id && !chatCtl) { chatCtl = new ChatController(id); void chatCtl.start(); }
+  });
   function setShell(l: ShellLayout) {
     if (layoutForced || l === shell) return;
     shell = l;
@@ -1045,6 +1053,7 @@
     heartbeat();
   });
   onDestroy(() => {
+    chatCtl?.dispose();
     if (pollTimer) clearInterval(pollTimer);
     if (typeof window !== "undefined") {
       window.removeEventListener("resize", refitTerms);
@@ -1119,9 +1128,7 @@
     {/if}
 
     <section class="chatp card" aria-label="agent chat">
-      <div class="colbar">Agent chat</div>
-      <div class="chatbody"><div class="chatempty"><span class="spark">✨</span><b>Agent chat arrives here</b><span class="mut">Soon you will ask for changes in plain words and watch your site update next to this panel.</span></div></div>
-      <div class="chatin"><input disabled placeholder="Ask the agent to build something (coming soon)" aria-label="chat message (not available yet)" /><button disabled>Send</button></div>
+      {#if chatCtl}<ChatPanel ctl={chatCtl} />{/if}
     </section>
 
     <aside class="files card" class:dragover={dragOver} aria-label="explorer"
@@ -1579,7 +1586,7 @@
   .chatp,.drawerbtns,.dclose{display:none}
   .dock.chat{position:relative;overflow:hidden;grid-template-columns:minmax(280px,30%) minmax(0,1fr)}
   .dock.chat.learn{grid-template-columns:minmax(220px,20%) minmax(260px,28%) minmax(0,1fr)}
-  .dock.chat .chatp{display:flex}
+  .dock.chat .chatp{display:flex;flex-direction:column;min-height:0;overflow:hidden}
   .dock.chat .hint-k{display:none}
   .dock.chat .drawerbtns{display:flex;margin-left:auto;padding-right:6px;gap:2px}
   .dock.chat .dclose{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);font-size:16px;cursor:pointer;flex:none}
@@ -1590,13 +1597,6 @@
   .dock.chat .files{width:min(320px,calc(100% - 24px))}
   .dock.chat .right{width:min(640px,calc(100% - 24px))}
   .dock.chat.dfiles .files,.dock.chat.dterm .right{visibility:visible;opacity:1;transform:none;pointer-events:auto;transition:opacity .15s,transform .15s}
-  .chatbody{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center}
-  .chatempty{display:flex;flex-direction:column;gap:8px;align-items:center;max-width:300px;font-size:13.5px;line-height:1.5}
-  .chatempty b{font-size:16px}.chatempty .spark{font-size:28px;color:var(--accent)}
-  .chatin{display:flex;gap:8px;padding:12px;border-top:1px solid var(--border);flex:none}
-  .chatin input{flex:1;min-width:0;height:38px;padding:0 12px;border-radius:9px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font:13.5px var(--sans)}
-  .chatin button{height:38px;padding:0 16px;border:0;border-radius:9px;background:var(--accent);color:var(--accent-ink);font:600 13.5px var(--sans)}
-  .chatin input:disabled,.chatin button:disabled{opacity:.5;cursor:not-allowed}
   @media (max-width:1200px){
     .layoutsw .lbl{display:none}
     .dock.chat,.dock.chat.learn{grid-template-columns:minmax(240px,34%) minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
