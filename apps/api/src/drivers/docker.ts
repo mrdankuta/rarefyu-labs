@@ -8,6 +8,11 @@ const WORKSPACE = `${HOME}/workspace`;
 const STARTER = `${HOME}/.starter`;
 const RING_MAX = 50 * 1024;
 const LABEL = "rfy.workspace";
+/** Fixed in-container port of the agent server (spec #50). Never published; reached over the per-workspace network. */
+export const AGENT_PORT = 4096;
+const AGENT_PID = "/tmp/agent-server.pid";
+/** Live = pidfile names a process that exists and is not a zombie (PID 1 is `sleep`, which never reaps). */
+const AGENT_ALIVE = `p=$(cat ${AGENT_PID} 2>/dev/null) && [ -n "$p" ] && kill -0 "$p" 2>/dev/null && ! grep -q '^State:[[:space:]]*[ZX]' "/proc/$p/status" 2>/dev/null`;
 
 export interface DockerDriverOptions {
   /** "docker-gvisor" requires the runsc runtime; "docker" is hardened runc (dev only). */
@@ -273,6 +278,33 @@ export class DockerDriver implements ExecDriver {
       { stdout: "pipe", stderr: "ignore", stdin: "ignore" },
     );
     return proc.stdout as unknown as ReadableStream<Uint8Array>;
+  }
+
+  // --- agent server (spec #50) ---
+  async startAgentServer(sessionId: string, password: string): Promise<WorkspaceAddress> {
+    await this.ensureRunning(sessionId);
+    // The password goes in on stdin, never argv/`docker exec -e` (visible in host `ps`).
+    // Listens on the container's private per-workspace network only; the port is not published.
+    // (Loopback would be unreachable from the API on the host; other workspaces cannot reach this network.)
+    const r = await this.exec(sessionId, ["sh", "-c",
+      `if ${AGENT_ALIVE}; then exit 0; fi
+       IFS= read -r OPENCODE_SERVER_PASSWORD; export OPENCODE_SERVER_PASSWORD
+       setsid nohup opencode serve --hostname 0.0.0.0 --port ${AGENT_PORT} >/tmp/agent-server.log 2>&1 </dev/null &
+       echo $! > ${AGENT_PID}`,
+    ], { stdin: `${password}\n`, timeoutMs: 20_000 });
+    if (r.exitCode !== 0) throw new Error(`cannot start agent server: ${r.stderr.trim() || "exec failed"}`);
+    return this.address(sessionId, AGENT_PORT);
+  }
+
+  async agentServerAddress(sessionId: string): Promise<WorkspaceAddress | null> {
+    if ((await this.state(sessionId)) !== "running") return null;
+    const r = await this.exec(sessionId, ["sh", "-c", AGENT_ALIVE]);
+    return r.exitCode === 0 ? this.address(sessionId, AGENT_PORT) : null;
+  }
+
+  async stopAgentServer(sessionId: string): Promise<void> {
+    if ((await this.state(sessionId)) !== "running") return;
+    await this.exec(sessionId, ["sh", "-c", `p=$(cat ${AGENT_PID} 2>/dev/null) && kill "$p" 2>/dev/null; rm -f ${AGENT_PID}; true`]);
   }
 
   // --- lifecycle ---

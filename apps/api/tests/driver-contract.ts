@@ -1,4 +1,8 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { AgentServers } from "../src/agent-server";
+import { agentRoutes } from "../src/agent-proxy";
+import { canAccess } from "../src/app";
+import { cookieOfKey, identityKey } from "../src/playgrounds";
 import type { ExecDriver } from "../src/drivers/types";
 
 /** Read terminal output until `needle` appears or timeout. */
@@ -336,5 +340,248 @@ export function driverContract(name: string, make: () => ExecDriver, opts?: { sk
       const names = (await d.listFiles(id)).map((f) => f.path);
       expect(names).not.toContain("gone.txt");
     });
+  });
+}
+
+
+export interface AgentContractOpts {
+  skip?: boolean | string;
+  /** Running the real pinned opencode binary (else the tiny stub, which also exposes /api/_stub/*). */
+  real?: boolean;
+  /** Pinned version the real binary must report. */
+  version?: string;
+  /** Docker backends: also assert the port is not published on the host. */
+  docker?: boolean;
+}
+
+/**
+ * Agent server contract (spec #50): every ExecDriver must manage a per-workspace
+ * `opencode serve` the API can start, health-check, proxy to (owner only), and recover.
+ */
+export function agentServerContract(name: string, make: () => ExecDriver, opts: AgentContractOpts = {}) {
+  const skipped = !!opts.skip;
+  const t = skipped ? test.skip : test;
+  const stubOnly = skipped || opts.real ? test.skip : test;
+  const d = skipped ? (undefined as unknown as ExecDriver) : make();
+  const servers = skipped ? (undefined as unknown as AgentServers) : new AgentServers(d);
+  const ids: string[] = [];
+  const recs = new Map<string, { ownerKey: string }>();
+  const ownerCookie = "owner-cookie";
+  const owner = { cookie: `rfy_sid=${ownerCookie}` };
+  const stranger = { cookie: "rfy_sid=someone-else" };
+  const routes = agentRoutes({
+    servers,
+    access: async (headers, id) => {
+      const rec = recs.get(id);
+      if (!rec) return "missing";
+      return (await canAccess(headers, rec)) ? "ok" : "denied";
+    },
+  });
+  const call = (id: string, path: string, init: RequestInit & { headers?: Record<string, string> } = {}) =>
+    routes.request(`/api/playgrounds/${id}/agent${path}`, init);
+  const workspace = async (tag: string) => {
+    const id = `agent-${tag}-${crypto.randomUUID().slice(0, 8)}`;
+    ids.push(id);
+    recs.set(id, { ownerKey: identityKey("203.0.113.9", ownerCookie) });
+    await d.create(id);
+    return id;
+  };
+  const prevEnforce = process.env.ENFORCE_OWNERSHIP;
+
+  describe(`Agent server contract: ${name}${typeof opts.skip === "string" ? ` (SKIPPED: ${opts.skip})` : ""}`, () => {
+    beforeAll(() => { process.env.ENFORCE_OWNERSHIP = "1"; });
+    afterAll(async () => {
+      process.env.ENFORCE_OWNERSHIP = prevEnforce;
+      if (skipped) return;
+      await Promise.all(ids.map((id) => d.destroy(id).catch(() => {})));
+    }, 60_000);
+
+    t("owner cookie identifies the workspace owner (sanity of the fixture)", () => {
+      expect(cookieOfKey(identityKey("203.0.113.9", ownerCookie))).toBe(ownerCookie);
+    });
+
+    t("starts on demand and reports healthy", async () => {
+      const id = await workspace("start");
+      expect((await servers.status(id)).state).toBe("stopped"); // nothing runs until asked
+      const r = await call(id, "", { method: "POST", headers: owner });
+      expect(r.status).toBe(200);
+      const body = await r.json();
+      expect(body.state).toBe("healthy");
+      if (opts.real && opts.version) expect(body.version).toBe(opts.version);
+      expect((await servers.status(id)).state).toBe("healthy");
+      const g = await call(id, "", { headers: owner });
+      expect((await g.json()).state).toBe("healthy");
+    }, 90_000);
+
+    t("starting again, even concurrently, is idempotent (one server)", async () => {
+      const id = await workspace("idem");
+      const [a, b] = await Promise.all([servers.start(id), servers.start(id)]);
+      expect([a.state, b.state]).toEqual(["healthy", "healthy"]);
+      const addr1 = await d.agentServerAddress(id);
+      await servers.start(id);
+      await d.startAgentServer(id, "ignored-when-already-running"); // driver level too
+      const addr2 = await d.agentServerAddress(id);
+      expect(addr2).toEqual(addr1);
+      expect((await servers.status(id)).state).toBe("healthy"); // password was not replaced
+      const n = await d.run(id, `pgrep -fc -- '[-]-port ${addr1!.port}( |$)'`);
+      expect(n.stdout.trim()).toBe("1");
+    }, 90_000);
+
+    t("is reachable through the proxy for the owner, rejected for a stranger and for no credentials", async () => {
+      const id = await workspace("authz");
+      await servers.start(id);
+      const ok = await call(id, "/api/info", { headers: owner });
+      expect(ok.status).toBe(200);
+      expect(typeof (await ok.json()).version).toBe("string");
+      expect((await call(id, "/api/session", { headers: owner })).status).toBe(200);
+      expect((await call(id, "/api/info", { headers: stranger })).status).toBe(403);
+      expect((await call(id, "/api/info")).status).toBe(403);
+      expect((await call(id, "/api/info", { method: "POST", headers: stranger })).status).toBe(403);
+      expect((await call(id, "", { method: "POST", headers: stranger })).status).toBe(403); // cannot start someone else's
+      expect((await routes.request("/api/playgrounds/nope/agent/api/info", { headers: owner })).status).toBe(404);
+    }, 90_000);
+
+    t("client-supplied Authorization is overridden and never reaches, or comes back from, the agent server", async () => {
+      const id = await workspace("override");
+      await servers.start(id);
+      const bogus = `Basic ${btoa("opencode:attacker-guess")}`;
+      const r = await call(id, "/api/info", { headers: { ...owner, authorization: bogus } });
+      expect(r.status).toBe(200); // the server saw the real credentials, not the attacker's
+      // Without an owner cookie the bogus header is no way in either.
+      expect((await call(id, "/api/info", { headers: { authorization: bogus } })).status).toBe(403);
+      const pw = (servers as unknown as { passwords: Map<string, string> }).passwords.get(id)!;
+      expect(JSON.stringify([...r.headers])).not.toContain(pw);
+      expect(await r.text()).not.toContain(pw);
+    }, 90_000);
+
+    stubOnly("the agent server sees injected server-side credentials, no client cookie, and the terminal's HOME and directory", async () => {
+      const id = await workspace("echo");
+      await d.injectCredentials(id, [{ path: ".local/share/opencode/auth.json", content: '{"opencode-go":{"type":"api","key":"sk-contract"}}' }]);
+      await servers.start(id);
+      const echo = await (await call(id, "/api/_stub/echo?x=1", { headers: { ...owner, authorization: "Basic Zm9vOmJhcg==" } })).json();
+      const pw = (servers as unknown as { passwords: Map<string, string> }).passwords.get(id)!;
+      expect(echo.authorization).toBe(`Basic ${btoa(`opencode:${pw}`)}`);
+      expect(echo.cookie).toBeNull();
+      expect(echo.path).toBe("/api/_stub/echo?x=1");
+      const term = await d.run(id, 'echo "$HOME"; pwd -P');
+      const [home, cwd] = term.stdout.trim().split("\n");
+      expect(echo.home).toBe(home!);
+      expect(echo.cwd).toBe(cwd!);
+    }, 60_000);
+
+    t("uses the workspace's seat key: the injected key reaches the server's credential store, config model is shared", async () => {
+      const id = await workspace("seatkey");
+      await d.injectCredentials(id, [
+        { path: ".local/share/opencode/auth.json", content: JSON.stringify({ "opencode-go": { type: "api", key: "sk-contract-seat" } }) },
+        { path: ".config/opencode/opencode.json", content: JSON.stringify({ model: "opencode-go/kimi-k3" }) },
+      ]);
+      await servers.start(id);
+      if (opts.real) {
+        const creds = await (await call(id, "/api/credential", { headers: owner })).json();
+        expect(creds.data.map((c: { integrationID: string }) => c.integrationID)).toContain("opencode-go");
+        // Restarting (new password, same HOME) must not duplicate it.
+        await d.stopAgentServer(id);
+        await servers.start(id);
+        const again = await (await call(id, "/api/credential", { headers: owner })).json();
+        expect(again.data.filter((c: { integrationID: string }) => c.integrationID === "opencode-go").length).toBe(1);
+      } else {
+        // The stub records connect/key calls; the terminal and the server read the very same files.
+        const log = await (await call(id, "/api/_stub/connected", { headers: owner })).json();
+        expect(log).toEqual(["opencode-go"]);
+      }
+      const term = await d.run(id, 'grep -c kimi-k3 "$HOME/.config/opencode/opencode.json"');
+      expect(term.stdout.trim()).toBe("1");
+    }, 120_000);
+
+    t("only sees the workspace directory and only /api/* is forwarded; traversal is refused", async () => {
+      const id = await workspace("paths");
+      await servers.start(id);
+      const loc = await (await call(id, "/api/location", { headers: owner })).text();
+      const cwd = (await d.run(id, "pwd -P")).stdout.trim();
+      expect(loc).toContain(cwd);
+      for (const p of ["/", "/index.html", "/openapi.json", "/_assets/x.js", "/api/../openapi.json", "/api/%2e%2e/openapi.json", "/api/%2E%2E%2fx", "/api/a%5c..%5cb", "/api//info", "/run", "/api"]) {
+        const r = await call(id, p, { headers: owner });
+        expect([p, r.status === 404 || r.status === 405 ? 404 : r.status]).toEqual([p, 404]);
+      }
+    }, 90_000);
+
+    stubOnly("request bodies are streamed to the server", async () => {
+      const id = await workspace("body");
+      await servers.start(id);
+      const r = await call(id, "/api/_stub/body", { method: "POST", headers: owner, body: "hello agent" });
+      expect(await r.text()).toBe("got:hello agent");
+    }, 60_000);
+
+    t("server-sent events arrive live (first frame well before the stream ends)", async () => {
+      const id = await workspace("sse");
+      await servers.start(id);
+      const t0 = Date.now();
+      const r = await call(id, "/api/event", { headers: owner });
+      expect(r.status).toBe(200);
+      expect(r.headers.get("content-type")).toContain("text/event-stream");
+      expect(r.headers.get("x-accel-buffering")).toBe("no");
+      expect(r.headers.get("cache-control")).toContain("no-transform");
+      const reader = r.body!.getReader();
+      const first = await Promise.race([reader.read(), Bun.sleep(2000).then(() => "timeout" as const)]);
+      expect(first).not.toBe("timeout");
+      expect(Date.now() - t0).toBeLessThan(2000);
+      const text = new TextDecoder().decode((first as ReadableStreamReadResult<Uint8Array>).value);
+      expect(text).toContain("server.connected");
+      await reader.cancel(); // closing the stream must not wedge the server
+      expect((await call(id, "/api/info", { headers: owner })).status).toBe(200);
+    }, 90_000);
+
+    t("the port is not published on the host", async () => {
+      const id = await workspace("port");
+      await servers.start(id);
+      const addr = (await d.agentServerAddress(id))!;
+      if (opts.docker) {
+        const insp = Bun.spawnSync(["docker", "inspect", "--format", "{{json .NetworkSettings.Ports}}|{{json .HostConfig.PortBindings}}", `rfy-${id}`]);
+        const [ports, bindings] = insp.stdout.toString().trim().split("|");
+        expect(JSON.stringify(JSON.parse(ports!))).not.toContain("HostPort");
+        expect(["{}", "null"]).toContain(bindings!);
+        // Nothing on the host answers at the internal port (skip if an unrelated host service owns it).
+        const hostConn = await fetch(`http://127.0.0.1:${addr.port}/api/info`, { signal: AbortSignal.timeout(1500) }).then(() => "answered", () => "refused");
+        if (!process.env.HOST_PORT_BUSY) expect(hostConn).toBe("refused");
+      } else {
+        expect(addr.host).toBe("127.0.0.1"); // loopback only; never a routable interface
+      }
+    }, 90_000);
+
+    t("a killed server comes back on start (and the proxy works again)", async () => {
+      const id = await workspace("kill");
+      await servers.start(id);
+      const addr = (await d.agentServerAddress(id))!;
+      const k = await d.run(id, `pkill -9 -f -- '[-]-port ${addr.port}( |$)'; echo done`);
+      expect(k.stdout).toContain("done");
+      let state = (await servers.status(id)).state;
+      for (let i = 0; i < 50 && state !== "stopped"; i++) { await Bun.sleep(100); state = (await servers.status(id)).state; }
+      expect(state).toBe("stopped");
+      expect((await call(id, "/api/info", { headers: owner })).status).toBe(503); // honest, no hang
+      const r = await call(id, "", { method: "POST", headers: owner });
+      expect((await r.json()).state).toBe("healthy");
+      expect((await servers.status(id)).state).toBe("healthy");
+      expect((await call(id, "/api/info", { headers: owner })).status).toBe(200);
+    }, 120_000);
+
+    t("after an API restart (password lost) start replaces the orphaned server", async () => {
+      const id = await workspace("restart");
+      await servers.start(id);
+      const fresh = new AgentServers(d); // new process memory: knows no passwords
+      expect((await fresh.status(id)).state).toBe("unhealthy");
+      expect((await fresh.start(id)).state).toBe("healthy");
+      expect((await fresh.status(id)).state).toBe("healthy");
+      const n = await d.run(id, `pgrep -fc -- '[-]-port ${(await d.agentServerAddress(id))!.port}( |$)'`);
+      expect(n.stdout.trim()).toBe("1");
+    }, 120_000);
+
+    t("hibernate stops the server; start after wake brings it back", async () => {
+      const id = await workspace("hib");
+      await servers.start(id);
+      await d.hibernate(id);
+      expect((await servers.status(id)).state).toBe("stopped");
+      await d.wake(id);
+      expect((await servers.start(id)).state).toBe("healthy");
+    }, 120_000);
   });
 }

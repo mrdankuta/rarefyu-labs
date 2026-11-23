@@ -26,6 +26,8 @@ import { auditEvent } from "./teach";
 import { lookupSnapshot, retireWorkspace, runLifecycle } from "./lifecycle";
 import { PREVIEW_TTL_SEC, signPreview } from "./preview";
 import { resolvePreviewTarget } from "./preview-proxy";
+import { AgentServers } from "./agent-server";
+import { agentRoutes } from "./agent-proxy";
 import { listTracks, loadTrack, trackLayout } from "./tracks";
 import { getAttempts, getProgress, runCheck, runSolve } from "./checks";
 import {
@@ -120,6 +122,15 @@ async function canAccess(headers: Headers, rec: { userId?: string; ownerKey: str
   return recCookie === "anon" || cookieOf(c) === recCookie;
 }
 export { canAccess };
+
+/** Per-workspace OpenCode servers (spec #50), started on demand through the driver. */
+export const agentServers = new AgentServers(driver);
+/** Same ownership rule as every other workspace route; a destroyed workspace is "missing". */
+export async function agentAccess(headers: Headers, id: string): Promise<"ok" | "denied" | "missing"> {
+  const rec = getPlayground(id);
+  if (!rec || rec.status === "destroyed") return "missing";
+  return (await canAccess(headers, rec)) ? "ok" : "denied";
+}
 
 async function authz(c: any, next: () => Promise<void>) {
   const rec = getPlayground(c.req.param("id"));
@@ -761,6 +772,9 @@ app.get("/api/playgrounds/:id/agent/audit", (c) => {
   if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
   return c.json({ audit: getAgentAudit(c.req.param("id")) });
 });
+
+// --- Agent server (issue #50): start/status + authenticated reverse proxy (see agent-proxy.ts) ---
+app.route("/", agentRoutes({ servers: agentServers, access: agentAccess }));
 
 // --- Isolated grading (issue #10): submit → grade in fresh env, immutable ---
 app.post("/api/playgrounds/:id/grade", async (c) => {

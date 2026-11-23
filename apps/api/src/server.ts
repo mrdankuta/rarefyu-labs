@@ -1,22 +1,38 @@
-import { app, canAccess } from "./app";
+import { agentAccess, agentServers, app, canAccess } from "./app";
+import { upstreamPath } from "./agent-proxy";
 import { getPlayground } from "./playgrounds";
 import { driver } from "./drivers";
 import { resolvePreviewTarget } from "./preview-proxy";
 
-type WsData =
-  | { kind: "terminal"; session: string; term: string }
-  | { kind: "preview"; target: string; upstream?: WebSocket; queue: (string | ArrayBuffer | Uint8Array)[] };
+type Relay = { target: string; authorization?: string; upstream?: WebSocket; queue: (string | ArrayBuffer | Uint8Array)[] };
+type WsData = { kind: "terminal"; session: string; term: string } | ({ kind: "preview" } & Relay) | ({ kind: "agent" } & Relay);
 
 /**
  * HTTP + WebSocket server.
  *  /ws/terminal?session=<id>&term=<termId>  terminal relay (refresh-safe: reattach resumes the shell)
  *  /preview/<token>/...  (Upgrade: websocket)  relay to the app inside the workspace (hot reload etc.)
+ *  /api/playgrounds/<id>/agent/api/...  (Upgrade: websocket)  owner-checked relay to the workspace's agent
+ *    server (PTY etc.); the server password is injected here and never leaves the API.
  */
 export function startServer(port: number) {
   return Bun.serve({
     port,
+    idleTimeout: 120, // SSE relays: bound idle sockets, well above the agent server's heartbeat interval
     async fetch(req: any, server: any) {
       const url = new URL(req.url);
+      const am = /^\/api\/playgrounds\/([^/]+)\/agent\/api\//.exec(url.pathname);
+      if (am && req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+        const id = decodeURIComponent(am[1]!);
+        const a = await agentAccess(req.headers, id);
+        if (a !== "ok") return new Response(a === "missing" ? "playground not found" : "not your workspace", { status: a === "missing" ? 404 : 403 });
+        const path = upstreamPath(id, url.pathname);
+        const t = await agentServers.target(id);
+        if (path === null) return new Response("not found", { status: 404 });
+        if (!t) return new Response("agent server is not running", { status: 503 });
+        const data: WsData = { kind: "agent", target: `ws://${t.host}:${t.port}${path}${url.search}`, authorization: t.authorization, queue: [] };
+        if (server.upgrade(req, { data })) return undefined as unknown as Response;
+        return new Response("websocket upgrade failed", { status: 426 });
+      }
       if (url.pathname === "/ws/terminal") {
         const session = url.searchParams.get("session") ?? "";
         const term = url.searchParams.get("term") ?? "main";
@@ -43,8 +59,10 @@ export function startServer(port: number) {
     websocket: {
       async open(ws: any) {
         const data = ws.data as WsData;
-        if (data.kind === "preview") {
-          const up = new WebSocket(data.target);
+        if (data.kind === "preview" || data.kind === "agent") {
+          const up = data.authorization
+            ? new WebSocket(data.target, { headers: { authorization: data.authorization } } as any)
+            : new WebSocket(data.target);
           up.binaryType = "arraybuffer";
           data.upstream = up;
           up.onopen = () => {
@@ -76,7 +94,7 @@ export function startServer(port: number) {
       },
       message(ws: any, message: any) {
         const data = ws.data as WsData;
-        if (data.kind === "preview") {
+        if (data.kind === "preview" || data.kind === "agent") {
           if (data.upstream?.readyState === WebSocket.OPEN) data.upstream.send(message);
           else data.queue.push(message);
           return;
@@ -93,7 +111,7 @@ export function startServer(port: number) {
       },
       close(ws: any) {
         const data = ws.data as WsData;
-        if (data.kind === "preview") {
+        if (data.kind === "preview" || data.kind === "agent") {
           try { data.upstream?.close(); } catch { /* gone */ }
           return;
         }

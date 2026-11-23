@@ -82,6 +82,19 @@ export interface ExecDriver {
   wake(sessionId: string): Promise<void>;
   /** Where a TCP port inside the workspace can be reached from the API (preview proxy). */
   address(sessionId: string, port: number): Promise<WorkspaceAddress>;
+  /**
+   * Start the headless OpenCode server (`opencode serve`) for a workspace: same
+   * user and working directory as the terminal agent, same HOME (so the same
+   * injected seat key and config). Idempotent: if one is already running it is
+   * left alone (the password argument is then ignored) and its address returned.
+   * `password` becomes OPENCODE_SERVER_PASSWORD; it must never reach argv or logs.
+   * The port is never published on the host; the address is only meaningful to the API.
+   */
+  startAgentServer(sessionId: string, password: string): Promise<WorkspaceAddress>;
+  /** Address of the agent server's process if it is alive, else null. Does not start anything. */
+  agentServerAddress(sessionId: string): Promise<WorkspaceAddress | null>;
+  /** Kill the agent server if running. Idempotent. */
+  stopAgentServer(sessionId: string): Promise<void>;
   /** Ids of every workspace the backend currently holds (running or hibernated). */
   list(): Promise<string[]>;
   /** Destroy workspace + shells. */

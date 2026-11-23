@@ -63,6 +63,13 @@ class Shell {
 export class LocalDriver implements ExecDriver {
   readonly backend = "local" as const;
   private shells = new Map<string, Shell>(); // `${sessionId}/${termId}`
+  private agents = new Map<string, { proc: ReturnType<typeof Bun.spawn>; port: number }>();
+  /** argv prefix for the OpenCode binary (OPENCODE_BIN overrides; tests point it at a stub). */
+  private opencode: string[];
+
+  constructor(opts: { opencodeBin?: string[] } = {}) {
+    this.opencode = opts.opencodeBin ?? [process.env.OPENCODE_BIN ?? "opencode"];
+  }
 
   private dir(sessionId: string) {
     return `${ROOT}/${sessionId}/workspace`;
@@ -209,7 +216,48 @@ export class LocalDriver implements ExecDriver {
     return { isolation: "none", hibernate: true };
   }
 
+  async startAgentServer(sessionId: string, password: string): Promise<WorkspaceAddress> {
+    const cur = await this.agentServerAddress(sessionId);
+    if (cur) return cur;
+    await this.create(sessionId);
+    // All local workspaces share the host's loopback, so each gets its own free port
+    // (the Docker driver uses one fixed port per container).
+    const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const port = probe.port;
+    probe.stop(true);
+    // Same HOME as the terminal when credentials were injected; otherwise an empty
+    // per-session HOME so a dev machine's own OpenCode config/key is never picked up.
+    const home = (await this.homeIfInjected(sessionId)) ?? this.home(sessionId);
+    await Bun.$`mkdir -p ${home}`.quiet();
+    const env: Record<string, string | undefined> = { ...process.env, HOME: home, OPENCODE_SERVER_PASSWORD: password };
+    for (const k of Object.keys(env)) if (k.startsWith("XDG_") || (k.startsWith("OPENCODE_") && k !== "OPENCODE_SERVER_PASSWORD")) delete env[k];
+    const proc = Bun.spawn([...this.opencode, "serve", "--hostname", "127.0.0.1", "--port", String(port)], {
+      cwd: this.dir(sessionId),
+      env,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    this.agents.set(sessionId, { proc, port });
+    return { host: "127.0.0.1", port };
+  }
+
+  async agentServerAddress(sessionId: string): Promise<WorkspaceAddress | null> {
+    const a = this.agents.get(sessionId);
+    if (!a || a.proc.exitCode !== null || a.proc.killed) return null;
+    return { host: "127.0.0.1", port: a.port };
+  }
+
+  async stopAgentServer(sessionId: string): Promise<void> {
+    const a = this.agents.get(sessionId);
+    this.agents.delete(sessionId);
+    if (!a) return;
+    try { a.proc.kill(); } catch { /* gone */ }
+    await a.proc.exited;
+  }
+
   async hibernate(sessionId: string): Promise<void> {
+    await this.stopAgentServer(sessionId);
     for (const [key, shell] of this.shells) {
       if (key.startsWith(`${sessionId}/`)) {
         shell.kill();
@@ -233,6 +281,7 @@ export class LocalDriver implements ExecDriver {
   }
 
   async destroy(sessionId: string): Promise<void> {
+    await this.stopAgentServer(sessionId);
     for (const [key, shell] of this.shells) {
       if (key.startsWith(`${sessionId}/`)) {
         shell.kill();

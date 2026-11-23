@@ -7,8 +7,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git tmux python3 python3-pip procps less nano jq unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Coding agents + bun, installed globally so every learner has them on PATH.
-RUN npm install -g --no-fund --no-audit opencode-ai@latest @anthropic-ai/claude-code@latest bun@latest \
+# OpenCode, pinned to an exact version. This ARG is the ONE place the version is
+# recorded: the terminal agent (`opencode`) and the headless agent server the API
+# manages (`opencode serve`, spec #47/#50) are the same binary. The server's
+# /api/* surface is experimental and changes between minors, so upgrades are deliberate
+# (bump here, rebuild, run the agent-server contract tests).
+ARG OPENCODE_VERSION=2.4.1
+RUN npm install -g --no-fund --no-audit @opencode/cli@${OPENCODE_VERSION} \
+    && opencode --version | grep -qx "opencode v${OPENCODE_VERSION}" \
+    && npm cache clean --force
+
+# Other agents + bun, installed globally so every learner has them on PATH.
+RUN npm install -g --no-fund --no-audit @anthropic-ai/claude-code@latest bun@latest \
     && npm cache clean --force
 
 # Non-root learner user. Never run sessions as root.

@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { DockerDriver } from "../src/drivers/docker";
-import { driverContract } from "./driver-contract";
+import { agentServerContract, driverContract } from "./driver-contract";
+import { PINNED_OPENCODE } from "./opencode-bin";
 
 const IMAGE = process.env.LAB_IMAGE ?? "rarefyu/base-lab:dev";
 
@@ -15,6 +16,20 @@ const backend = haveRunsc ? "docker-gvisor" : "docker";
 const mk = () => new DockerDriver({ backend, image: IMAGE, memory: "512m" });
 
 driverContract(`docker (${backend})`, mk, { skip: !haveDocker });
+
+// Real pinned opencode inside the workspace image (skipped if the image predates the pin).
+const imageOpencode = haveDocker
+  ? sh(["run", "--rm", "--entrypoint", "opencode", IMAGE, "--version"]).out.trim().replace(/^opencode v?/, "")
+  : "";
+const haveOpencode = imageOpencode === PINNED_OPENCODE;
+agentServerContract(`docker (${backend}, real opencode)`, mk, {
+  skip: !haveDocker
+    ? "docker or the workspace image is unavailable"
+    : !haveOpencode ? `image ${IMAGE} has opencode "${imageOpencode}", pinned is ${PINNED_OPENCODE}; rebuild images/base-lab` : false,
+  real: true,
+  docker: true,
+  version: PINNED_OPENCODE,
+});
 
 const t = haveDocker ? test : test.skip;
 const created: string[] = [];
@@ -76,6 +91,19 @@ describe("docker driver: isolation and hardening", () => {
     // a cannot see b's volume
     expect((await d.run(a, "cat ~/workspace/secret.txt")).exitCode).not.toBe(0);
   });
+
+  t("another workspace cannot reach this workspace's agent server", async () => {
+    const a = sid("agA"), b = sid("agB");
+    await d.create(a);
+    await d.create(b);
+    if (!haveOpencode) return; // covered by the generic isolation test; nothing listens without the pinned image
+    const pw = "isolation-probe-pw";
+    const addr = await d.startAgentServer(a, pw);
+    for (let i = 0; i < 100 && !(await fetch(`http://${addr.host}:${addr.port}/api/info`, { headers: { authorization: `Basic ${btoa(`opencode:${pw}`)}` } }).then((r) => r.ok, () => false)); i++) await Bun.sleep(150);
+    const probe = await d.run(b, `timeout 3 bash -c 'exec 3<>/dev/tcp/${addr.host}/${addr.port}' 2>&1; echo rc=$?`, { timeoutMs: 8000 });
+    expect(probe.stdout).not.toContain("rc=0");
+    await d.stopAgentServer(a);
+  }, 60_000);
 
   t("hibernate really stops the container; wake restores it with files", async () => {
     const id = sid("hib");
