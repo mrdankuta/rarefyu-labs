@@ -23,6 +23,7 @@ export const PATHS = {
   permissions: (id: string) => `/api/session/${encodeURIComponent(id)}/permission`,
   permissionReply: (id: string, req: string) => `/api/session/${encodeURIComponent(id)}/permission/${encodeURIComponent(req)}/reply`,
   events: "/api/event",
+  location: "/api/location",
 } as const;
 
 export type ConnState = "connecting" | "live" | "reconnecting";
@@ -40,6 +41,12 @@ export interface AgentClient {
   listMessages(sessionId: string): Promise<any[]>;
   /** Session ids with a turn running right now. */
   activeSessionIds(): Promise<Set<string>>;
+  /**
+   * The agent server's working directory = the workspace root as the server spells it (host path for the local driver,
+   * the container's workspace dir for Docker), plus its realpath if that differs. Fetched once per client and cached;
+   * null if it could not be read (not cached, so a later call retries).
+   */
+  location(): Promise<string[] | null>;
   /** Permission requests the agent is waiting on for this session (empty when none). */
   listPermissions(sessionId: string): Promise<any[]>;
   /** Answer a permission request: once = allow this time, reject = deny. */
@@ -67,6 +74,22 @@ export function createSseParser(onData: (json: string) => void) {
   };
 }
 
+/**
+ * `GET /api/location` on 2.4.1 answers `{directory, project:{directory, canonical}}` (`canonical` is the realpath, which
+ * can differ from `directory` through symlinks). Older/fake servers answer a bare JSON string. Returns every distinct
+ * absolute spelling, or null if there is none.
+ */
+export function locationOf(body: unknown): string[] | null {
+  const out = new Set<string>();
+  const add = (v: unknown) => { if (typeof v === "string" && v.startsWith("/")) out.add(v.replace(/\/+$/, "") || "/"); };
+  if (typeof body === "string") add(body);
+  else if (body && typeof body === "object") {
+    const b = body as any;
+    for (const v of [b.directory, b.path, b.cwd, b.worktree, b.project?.directory, b.project?.canonical, b.project?.worktree]) add(v);
+  }
+  return out.size ? [...out] : null;
+}
+
 export function createAgentClient(opts: { base: string; fetch?: typeof fetch }): AgentClient {
   const f = (...a: Parameters<typeof fetch>) => (opts.fetch ?? fetch)(...a);
   const url = (p: string, q?: Record<string, string | number>) => {
@@ -89,8 +112,14 @@ export function createAgentClient(opts: { base: string; fetch?: typeof fetch }):
   }
   const json = (method: string, body?: unknown): RequestInit => ({ method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
 
+  let loc: Promise<string[] | null> | null = null;
   return {
-    ensure: () => call<AgentStatus>(PATHS.agent, { method: "POST" }),
+    async ensure() { const st = await call<AgentStatus>(PATHS.agent, { method: "POST" }); loc = null; return st; }, // a (re)started server: ask again
+    location() {
+      return (loc ??= (async () => {
+        try { return locationOf(await call<unknown>(PATHS.location)); } catch { return null; }
+      })().then((v) => { if (v === null) loc = null; return v; }));
+    },
     status: () => call<AgentStatus>(PATHS.agent),
     async createSession() { return (await call<{ data: SessionInfo }>(PATHS.sessions, json("POST", {}))).data; },
     async listSessions(limit = 20) { return (await call<{ data: SessionInfo[] }>(PATHS.sessions, { q: { limit, order: "desc" } })).data ?? []; },

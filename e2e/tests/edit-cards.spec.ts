@@ -257,3 +257,85 @@ test.describe("edit cards", () => {
     expect(await read(page, "a.txt")).toBe(A);
   });
 });
+
+// Real models pass ABSOLUTE host paths (/tmp/labs-playgrounds/<id>/workspace/index.html). The stub does too by default
+// (it reads the working directory from OpenCode's system prompt), so every spec above already runs with absolute
+// paths; these cases pin the symptoms of the original bug: a second "tmp/labs-playgrounds/..." card, Changes = 2 and
+// the host path in the tool-call line. `[[rel]]` keeps the relative form covered.
+test.describe("absolute paths from the model", () => {
+  test.setTimeout(120_000);
+  const lbl = (p: Page) => p.locator(".msg.assistant .lbl");
+  const noHostPath = async (p: Page) => {
+    await expect(p.locator("[data-testid=edit-card][data-path*=tmp]")).toHaveCount(0);
+    await expect(p.locator("[data-testid=edit-card][data-path*=labs-playgrounds]")).toHaveCount(0);
+    for (const t of await lbl(p).allTextContents()) expect(t).not.toContain("labs-playgrounds");
+  };
+
+  test("the stub really sends an absolute path", async ({ page }) => {
+    await open(page);
+    await say(page, "make it " + call("write", { path: "index.html", content: "<h1>hi</h1>\n" }));
+    await done(page);
+    const abs = stub.requests.flatMap((r) => (r.body.messages ?? []).filter((m: any) => m.role === "assistant" && m.tool_calls)).flatMap((m: any) => m.tool_calls).map((c: any) => JSON.parse(c.function.arguments).path);
+    expect(abs.some((p: string) => p.startsWith("/") && p.endsWith("/index.html"))).toBe(true);
+  });
+
+  test("write: exactly ONE card, Changes shows 1, tool line shows the relative path", async ({ page }) => {
+    await open(page);
+    await say(page, "make it " + call("write", { path: "index.html", content: "<!doctype html>\n<h1>hi</h1>\n<p>x</p>\n" }));
+    await done(page);
+    await expect(page.locator("[data-testid=edit-card]")).toHaveCount(1);
+    await expect(card(page, "index.html").getByTestId("card-add")).toHaveText("+3");
+    await expect(card(page, "index.html").getByTestId("card-status")).toHaveText("New");
+    await expect(changesTab(page)).toContainText("1");
+    await expect(changesTab(page)).not.toContainText("2");
+    await expect(lbl(page).filter({ hasText: "Writing index.html" })).toHaveCount(1);
+    await noHostPath(page);
+    await page.waitForTimeout(6000); // past the lab's 5s poll: still one card
+    await expect(page.locator("[data-testid=edit-card]")).toHaveCount(1);
+  });
+
+  test("edit of an existing file: right +/- counts and Keep", async ({ page }) => {
+    await open(page, { "a.txt": A });
+    await say(page, "tweak " + call("edit", { path: "a.txt", oldString: "two", newString: "TWO\nextra" }));
+    await done(page);
+    await expect(page.locator("[data-testid=edit-card]")).toHaveCount(1);
+    await expect(card(page, "a.txt").getByTestId("card-add")).toHaveText("+2");
+    await expect(card(page, "a.txt").getByTestId("card-del")).toHaveText("−1");
+    await expect(card(page, "a.txt").getByTestId("card-status")).toHaveText("Edited");
+    await expect(lbl(page).filter({ hasText: "Editing a.txt" })).toHaveCount(1);
+    await noHostPath(page);
+    await card(page, "a.txt").getByRole("button", { name: "Keep", exact: true }).click();
+    await expect(card(page, "a.txt")).toHaveAttribute("data-state", "kept");
+  });
+
+  test("delete via the shell: one Deleted card, Undo restores", async ({ page }) => {
+    await open(page, { "a.txt": A, "gone.txt": "bye\n" });
+    // an absolute path in the command, like a real model writes it; read the root from the system prompt the same way the stub does
+    const res = await page.request.get(`${base}/api/playgrounds/${wsId}/agent/api/location`);
+    const root = ((await res.json()) as { directory: string }).directory.replace(/\/+$/, "");
+    await say(page, "clean up " + call("shell", { command: `rm ${root}/gone.txt`, description: "remove" }));
+    await done(page);
+    await expect(page.locator("[data-testid=edit-card]")).toHaveCount(1);
+    await expect(card(page, "gone.txt").getByTestId("card-status")).toHaveText("Deleted", { timeout: 15_000 });
+    await expect(changesTab(page)).toContainText("1");
+    await card(page, "gone.txt").getByRole("button", { name: "Undo", exact: true }).click();
+    expect(await read(page, "gone.txt")).toBe("bye\n");
+  });
+
+  test("a write outside the workspace makes no card (the policy denies it)", async ({ page }) => {
+    await open(page);
+    await say(page, "sneaky [[outside]]");
+    await expect(page.locator(".msg.assistant").last()).toBeVisible({ timeout: 40_000 });
+    await page.waitForTimeout(3000);
+    await expect(page.locator("[data-testid=edit-card]")).toHaveCount(0);
+  });
+
+  test("[[rel]] variant: relative paths still give one card", async ({ page }) => {
+    await open(page);
+    await say(page, "[[rel]] " + call("write", { path: "rel.txt", content: "r\n" }));
+    await done(page);
+    await expect(page.locator("[data-testid=edit-card]")).toHaveCount(1);
+    await expect(card(page, "rel.txt")).toBeVisible();
+    await expect(lbl(page).filter({ hasText: "Writing rel.txt" })).toHaveCount(1);
+  });
+});

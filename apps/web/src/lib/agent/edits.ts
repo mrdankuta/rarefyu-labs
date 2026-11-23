@@ -30,26 +30,61 @@ export interface EditHost {
 const FILE_EDIT_TOOLS = new Set(["write", "edit", "multiedit", "patch"]);
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
-/** Workspace-relative form of a path the model gave (it may be absolute or start with ./). */
-export function normPath(p: string, root?: string): string {
-  let s = p.trim().replace(/\\/g, "/");
-  if (root) { const r = root.replace(/\/+$/, ""); if (s.startsWith(r + "/")) s = s.slice(r.length + 1); }
-  return s.replace(/^\.\//, "").replace(/^\/+/, "");
+/** Root spellings to try for a path: the server's reported root plus its realpath-ish twin (e.g. /tmp <-> /private/tmp). */
+export function rootVariants(root?: string | string[] | null): string[] {
+  const out = new Set<string>();
+  for (const r0 of Array.isArray(root) ? root : root ? [root] : []) {
+    const r = r0.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+    if (!r.startsWith("/")) continue;
+    out.add(r);
+    out.add(r.startsWith("/private/") ? r.slice(8) : "/private" + r);
+  }
+  return [...out].sort((a, b) => b.length - a.length);
 }
 
+/** Tidy a relative path: backslashes, "./", repeated or trailing slashes. */
+const tidy = (s: string) => s.replace(/\/+/g, "/").replace(/^(\.\/)+/, "").replace(/\/\.(?=\/|$)/g, "").replace(/\/+$/, "");
+
+/**
+ * Workspace-relative form of a path a tool call gave (models pass ABSOLUTE host paths). With a known `root` a path
+ * under it is made relative; an absolute path outside it is returned unchanged (still starting with "/"), see
+ * `isOutside`. Without a root the old behaviour applies (leading slashes are just stripped).
+ */
+export function normPath(p: string, root?: string | string[] | null): string {
+  const s = p.trim().replace(/\\/g, "/");
+  const roots = rootVariants(root);
+  if (roots.length) {
+    if (s.startsWith("/")) {
+      const c = s.replace(/\/+/g, "/");
+      for (const r of roots) {
+        if (c === r) return "";
+        if (c.startsWith(r + "/")) return tidy(c.slice(r.length + 1));
+      }
+      return c; // absolute and outside the workspace
+    }
+  } else if (!s.startsWith("/")) return tidy(s);
+  return roots.length ? tidy(s) : tidy(s.replace(/^\/+/, ""));
+}
+
+/** A normalized path that is not inside the workspace (absolute, or climbing out with ".."). */
+export const isOutside = (np: string) => np.startsWith("/") || np === ".." || np.startsWith("../");
+
+/** Paths outside the workspace get no card (the lab policy denies them anyway). Only judged once the root is known. */
+const keep = (paths: string[], root?: string | string[] | null) => paths.filter((x) => x && (!rootVariants(root).length ? !x.startsWith("../") : !isOutside(x)));
+
 /** Files a tool call writes. Empty for read-only and shell tools (shell effects are picked up from the Changes list). */
-export function editPathsOf(name: string, input?: Record<string, unknown>): string[] {
+export function editPathsOf(name: string, input?: Record<string, unknown>, root?: string | string[] | null): string[] {
   const i = input ?? {};
   const n = name.toLowerCase();
   if (FILE_EDIT_TOOLS.has(n)) {
     const p = str(i.path) || str(i.filePath) || str(i.file_path) || str(i.file) || str(i.filename);
-    return p ? [normPath(p)] : [];
+    return keep(p ? [normPath(p, root)] : [], root);
   }
   if (n === "apply_patch") {
     const text = str(i.patchText) || str(i.patch) || str(i.input);
     const out: string[] = [];
-    for (const m of text.matchAll(/^\*\*\* (?:Add|Update|Delete) File:\s*(.+?)\s*$/gm)) out.push(normPath(m[1]!));
-    return [...new Set(out)];
+    for (const m of text.matchAll(/^\*\*\* (?:Add|Update|Delete) File:\s*(.+?)\s*$/gm)) out.push(normPath(m[1]!, root));
+    return keep([...new Set(out)], root);
   }
   return [];
 }
@@ -98,9 +133,21 @@ export interface Card { path: string; state: CardState; change?: ChangeInfo; /**
 export function buildCards(
   turns: Turn[],
   changed: Map<number, string[]>,
-  host: Pick<EditHost, "change" | "resolution" | "hasBaseline">,
+  host: Pick<EditHost, "change" | "resolution" | "hasBaseline" | "versions">,
+  opts: { rootKnown?: boolean } = {},
 ): Map<number, Card[]> {
-  const perTurn = turns.map((t) => ({ index: t.index, paths: [...new Set([...t.paths, ...(changed.get(t.index) ?? [])])].sort() }));
+  // Last resort when the workspace root is unknown: a tool path that still carries the host prefix
+  // ("tmp/labs-playgrounds/x/workspace/index.html") is the lab's own "index.html" if the lab's list has a path that is
+  // a trailing-segments match. Prevents two cards (and a doubled Changes count) for one file.
+  const lab = opts.rootKnown ? null : new Set([...host.versions().keys()]);
+  const known = (p: string) => !!lab && (lab.has(p) || !!host.change(p) || !!host.resolution(p) || host.hasBaseline(p));
+  const resolve = (p: string) => {
+    if (!lab || known(p)) return p;
+    let best = p;
+    for (const k of lab) if (p.endsWith("/" + k) && (best === p || k.length > best.length)) best = k;
+    return best;
+  };
+  const perTurn = turns.map((t) => ({ index: t.index, paths: [...new Set([...t.paths, ...(changed.get(t.index) ?? [])].map(resolve))].sort() }));
   const latest = new Map<string, number>();
   for (const t of perTurn) for (const p of t.paths) latest.set(p, t.index);
   const out = new Map<number, Card[]>();

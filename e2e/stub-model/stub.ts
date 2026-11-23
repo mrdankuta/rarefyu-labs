@@ -15,6 +15,9 @@
  *   [[longerr]]   ask for a `bash` call that prints 80 lines to stderr and exits 1, then a final text reply
  *   [[site:TEXT]] ask for a `write` tool call that writes index.html (`<h1 id="t">TEXT</h1>` plus a tall spacer), then a final text reply
  *   [[call:NAME:{json}]]   ask for any tool call with those arguments, then a final text reply
+ *   [[rel]]       (anywhere in the message) emit workspace-RELATIVE paths in file tool calls. The DEFAULT is ABSOLUTE
+ *                 (<workspace root>/<path>) because real models pass absolute paths. The root is read from the
+ *                 "Working directory: ..." line OpenCode puts in the system prompt (override: STUB_WORKSPACE_ROOT).
  *   [[401]] [[429]] [[500]]   respond with that HTTP status and a provider-style JSON error body
  * Every request is recorded in `requests` (authorization header + body) for assertions.
  */
@@ -42,6 +45,27 @@ function lastUserText(messages: any[]): string {
     if (Array.isArray(m.content)) return m.content.map((p: any) => p.text ?? "").join(" ");
   }
   return "";
+}
+
+const PATH_KEYS = ["path", "filePath", "file_path", "file", "filename"];
+/** Workspace root as the model sees it: OpenCode's system prompt names the working directory. */
+function workspaceRoot(msgs: any[]): string | null {
+  if (process.env.STUB_WORKSPACE_ROOT) return process.env.STUB_WORKSPACE_ROOT;
+  for (const m of msgs) {
+    if (m.role !== "system") continue;
+    const t = typeof m.content === "string" ? m.content : Array.isArray(m.content) ? m.content.map((p: any) => p.text ?? "").join("\n") : "";
+    const r = /Working directory:\s*(\/\S+)/.exec(t) ?? /<cwd>\s*(\/[^<\s]+)/.exec(t);
+    if (r) return r[1]!.replace(/\/+$/, "");
+  }
+  return null;
+}
+/** Make the path arguments of a tool call absolute (what real models do), unless [[rel]] asked for the relative form. */
+function withPaths(args: any, text: string, msgs: any[]): any {
+  const root = text.includes("[[rel]]") ? null : workspaceRoot(msgs);
+  if (!root || !args || typeof args !== "object") return args;
+  const out = { ...args };
+  for (const k of PATH_KEYS) if (typeof out[k] === "string" && !out[k].startsWith("/")) out[k] = `${root}/${out[k].replace(/^\.\//, "")}`;
+  return out;
 }
 
 function toolFor(text: string): { name: string; args: object } | null {
@@ -95,7 +119,8 @@ export function startStub(port = 0): Promise<{ port: number; url: string; reques
     if (calls.length && toolsSinceUser < calls.length) {
       const c = calls[toolsSinceUser]!;
       send(chunk({ tool_calls: [{ index: 0, id: `call_stub_${toolsSinceUser}`, type: "function", function: { name: c.name, arguments: "" } }] }));
-      send(chunk({ tool_calls: [{ index: 0, function: { arguments: c.args } }] }));
+      let cargs = c.args; try { cargs = JSON.stringify(withPaths(JSON.parse(c.args), text, msgs)); } catch { /* keep as given */ }
+      send(chunk({ tool_calls: [{ index: 0, function: { arguments: cargs } }] }));
       send(chunk({}, "tool_calls", { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } }));
     } else if (calls.length) {
       for (const w of "Done with the edits.".match(/\S+\s*/g) ?? []) { send(chunk({ content: w })); await sleep(20); }
@@ -103,7 +128,7 @@ export function startStub(port = 0): Promise<{ port: number; url: string; reques
     } else if (!afterTool && toolFor(text)) {
       const call = toolFor(text)!;
       send(chunk({ tool_calls: [{ index: 0, id: "call_stub1", type: "function", function: { name: call.name, arguments: "" } }] }));
-      send(chunk({ tool_calls: [{ index: 0, function: { arguments: JSON.stringify(call.args) } }] }));
+      send(chunk({ tool_calls: [{ index: 0, function: { arguments: JSON.stringify(withPaths(call.args, text, msgs)) } }] }));
       send(chunk({}, "tool_calls", { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } }));
     } else if (text.includes("[[slow]]")) {
       for (let i = 0; i < 60 && !closed; i++) { await sleep(150); send(chunk({ content: `word${i} ` })); }

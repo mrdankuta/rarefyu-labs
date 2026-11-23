@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createAgentClient, createSseParser } from "./api";
+import { createAgentClient, createSseParser, locationOf } from "./api";
 import { AgentApiError } from "./errors";
 
 describe("createSseParser", () => {
@@ -64,5 +64,47 @@ describe("client paths and error handling", () => {
     expect(seen).toEqual(["x", "y"]);
     expect(resync).toBe(1);
     expect(states).toContain("reconnecting");
+  });
+});
+
+describe("location (workspace root)", () => {
+  const mkc = (handler: (url: string) => Response | Promise<Response>) => {
+    const urls: string[] = [];
+    const f = (async (url: string) => { urls.push(url); return handler(url); }) as unknown as typeof fetch;
+    return { c: createAgentClient({ base: "/b", fetch: f }), urls };
+  };
+  test("reads the bare-string answer through the proxy path and caches it", async () => {
+    const { c, urls } = mkc(() => Response.json("/tmp/labs-playgrounds/x/workspace/"));
+    expect(await c.location()).toEqual(["/tmp/labs-playgrounds/x/workspace"]);
+    expect(await c.location()).toEqual(["/tmp/labs-playgrounds/x/workspace"]);
+    expect(urls).toEqual(["/b/api/location"]);
+  });
+  test("concurrent callers share one request", async () => {
+    const { c, urls } = mkc(() => Response.json("/w"));
+    expect(await Promise.all([c.location(), c.location()])).toEqual([["/w"], ["/w"]]);
+    expect(urls.length).toBe(1);
+  });
+  test("a failure is null and NOT cached: the next call asks again", async () => {
+    let n = 0;
+    const { c, urls } = mkc(() => (n++ === 0 ? new Response("x", { status: 503 }) : Response.json("/w")));
+    expect(await c.location()).toBeNull();
+    expect(await c.location()).toEqual(["/w"]);
+    expect(urls.length).toBe(2);
+  });
+  test("a restarted server (ensure) is asked again", async () => {
+    const { c, urls } = mkc((u) => (u.endsWith("/location") ? Response.json("/w") : Response.json({ state: "healthy" })));
+    await c.location(); await c.ensure(); await c.location();
+    expect(urls.filter((u) => u.endsWith("/api/location")).length).toBe(2);
+  });
+  test("2.4.1 shape: directory plus the project's canonical realpath, both kept", async () => {
+    const { c } = mkc(() => Response.json({ directory: "/tmp/x/workspace", project: { id: "p", directory: "/tmp/x/workspace", canonical: "/private/tmp/x/workspace" } }));
+    expect(await c.location()).toEqual(["/tmp/x/workspace", "/private/tmp/x/workspace"]);
+  });
+  test("locationOf accepts object forms and rejects junk", () => {
+    expect(locationOf({ directory: "/a/b/" })).toEqual(["/a/b"]);
+    expect(locationOf({ cwd: "/a" })).toEqual(["/a"]);
+    expect(locationOf("relative")).toBeNull();
+    expect(locationOf(null)).toBeNull();
+    expect(locationOf(42)).toBeNull();
   });
 });

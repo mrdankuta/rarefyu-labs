@@ -22,7 +22,7 @@
     if (!host) return out;
     const changed = new Map(Object.entries(ctl.turnChanged).map(([k, v]) => [Number(k), v]));
     const turns = turnsOf(ctl.chat.messages);
-    const byTurn = buildCards(turns, changed, host);
+    const byTurn = buildCards(turns, changed, host, { rootKnown: !!ctl.root });
     const last = lastAssistantIds(ctl.chat.messages);
     for (const [turn, cards] of byTurn) {
       if (busy && turn === turns.length - 1) continue; // still working: files may still change

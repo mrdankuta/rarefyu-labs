@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildCards, changedSince, editPathsOf, lastAssistantIds, normPath, totals, turnsOf, type ChangeInfo, type Resolution } from "./edits";
+import { buildCards, changedSince, editPathsOf, isOutside, lastAssistantIds, normPath, totals, turnsOf, type ChangeInfo, type Resolution } from "./edits";
 import { applyEvent, newChatState, stateFromMessages, type UiMessage } from "./events";
 
 const tool = (id: string, paths: string[], status: "done" | "error" | "running" = "done"): any => ({ type: "tool", id, name: "edit", status, label: "x", paths });
@@ -25,9 +25,72 @@ describe("editPathsOf", () => {
     expect(normPath("./a/b")).toBe("a/b");
     expect(normPath("/work/a/b", "/work")).toBe("a/b");
   });
+  test("absolute tool paths become workspace-relative when the root is known", () => {
+    const root = "/tmp/labs-playgrounds/abc/workspace";
+    expect(editPathsOf("write", { filePath: `${root}/index.html` }, root)).toEqual(["index.html"]);
+    expect(editPathsOf("edit", { path: `${root}/src/./a.js` }, [root])).toEqual(["src/a.js"]);
+    expect(editPathsOf("apply_patch", { patchText: `*** Add File: ${root}/n.txt
++x
+*** Delete File: ${root}/g.txt` }, root)).toEqual(["n.txt", "g.txt"]);
+  });
+  test("paths outside the workspace make no card once the root is known", () => {
+    expect(editPathsOf("write", { path: "/tmp/rfy-outside-stub.txt" }, "/work")).toEqual([]);
+    expect(editPathsOf("write", { path: "../x.txt" }, "/work")).toEqual([]);
+    expect(editPathsOf("write", { path: "../x.txt" })).toEqual([]);
+    expect(editPathsOf("write", { path: "/workspace-other/x" }, "/work")).toEqual([]); // prefix is not a path boundary
+  });
+});
+
+describe("normPath with a root", () => {
+  const root = "/home/u/ws";
+  test("trailing slashes on the root and doubled slashes in the path", () => {
+    expect(normPath("/home/u/ws/a/b.txt", "/home/u/ws/")).toBe("a/b.txt");
+    expect(normPath("/home/u/ws//a///b.txt", "/home/u/ws//")).toBe("a/b.txt");
+  });
+  test("already relative and ./x stay relative", () => {
+    expect(normPath("a/b.txt", root)).toBe("a/b.txt");
+    expect(normPath("./a/b.txt", root)).toBe("a/b.txt");
+    expect(normPath(".\\a\\b.txt", root)).toBe("a/b.txt");
+  });
+  test("outside the workspace is left alone (absolute) and flagged", () => {
+    expect(normPath("/etc/passwd", root)).toBe("/etc/passwd");
+    expect(isOutside(normPath("/etc/passwd", root))).toBe(true);
+    expect(isOutside(normPath("../up.txt", root))).toBe(true);
+    expect(isOutside(normPath("a/b.txt", root))).toBe(false);
+    expect(normPath("/home/u/ws-other/a", root)).toBe("/home/u/ws-other/a");
+  });
+  test("the root itself is the empty path", () => { expect(normPath("/home/u/ws", root)).toBe(""); });
+  test("realpath twin: /tmp vs /private/tmp, and a list of candidate roots", () => {
+    expect(normPath("/private/tmp/ws/a.txt", "/tmp/ws")).toBe("a.txt");
+    expect(normPath("/tmp/ws/a.txt", "/private/tmp/ws")).toBe("a.txt");
+    expect(normPath("/real/ws/a.txt", ["/link/ws", "/real/ws"])).toBe("a.txt");
+  });
+  test("docker: container workspace dir under $HOME", () => {
+    expect(normPath("/home/learner/workspace/site/app.css", "/home/learner/workspace")).toBe("site/app.css");
+  });
+  test("no root: old behaviour (leading slash stripped)", () => {
+    expect(normPath("/tmp/x/index.html")).toBe("tmp/x/index.html");
+    expect(normPath("/tmp/x/index.html", null)).toBe("tmp/x/index.html");
+  });
 });
 
 describe("tool paths flow through events", () => {
+  test("with a root, label and paths are relative (live and stored)", () => {
+    const root = "/tmp/labs-playgrounds/abc/workspace";
+    const st = newChatState([root]);
+    applyEvent(st, { type: "session.tool.input.started", data: { assistantMessageID: "a1", id: "t1", name: "write" } });
+    applyEvent(st, { type: "session.tool.called", data: { assistantMessageID: "a1", id: "t1", input: { filePath: `${root}/index.html`, content: "x" } } });
+    const p = (st.messages[0] as any).parts[0];
+    expect(p.label).toBe("Writing index.html");
+    expect(p.paths).toEqual(["index.html"]);
+    const hist = stateFromMessages([{ type: "user", id: "u", text: "hi" }, { type: "assistant", id: "a", content: [{ type: "tool", id: "t", name: "read", state: { status: "completed", input: { filePath: `${root}/a/b.txt` } } }] }], false, [root]);
+    expect((hist.messages[1] as any).parts[0].label).toBe("Reading a/b.txt");
+  });
+  test("outside paths keep their label as given and make no card path", () => {
+    const st = newChatState(["/work"]);
+    applyEvent(st, { type: "session.tool.called", data: { assistantMessageID: "a1", id: "t1", input: { filePath: "/etc/hosts" } } });
+    expect((st.messages[0] as any).parts[0].paths).toEqual([]);
+  });
   test("live tool.called and stored history both carry paths", () => {
     const st = newChatState();
     applyEvent(st, { type: "session.tool.input.started", data: { assistantMessageID: "a1", id: "t1", name: "edit" } });
@@ -60,6 +123,7 @@ describe("buildCards", () => {
     change: (p: string) => changes[p],
     resolution: (p: string) => res[p],
     hasBaseline: (p: string) => base.includes(p),
+    versions: () => new Map(Object.keys(changes).map((k) => [k, 1] as [string, number])),
   });
   const turns = [{ index: 0, paths: ["a.txt", "b.txt"] }, { index: 1, paths: ["a.txt"] }];
   test("counts come from the lab's change list (combined, not per tool call)", () => {
@@ -91,5 +155,22 @@ describe("buildCards", () => {
     const m = buildCards([{ index: 0, paths: ["big.bin"] }], new Map(), mk({ "big.bin": { status: "added", add: 0, del: 0, opaque: true } }));
     expect(m.get(0)![0]!.change!.opaque).toBe(true);
     expect(totals(m.get(0)!)).toEqual({ add: 0, del: 0 });
+  });
+});
+
+describe("buildCards without a known root (last-resort de-duplication)", () => {
+  const host = (changes: Record<string, ChangeInfo>) => ({ change: (p: string) => changes[p], resolution: () => undefined, hasBaseline: () => false, versions: () => new Map(Object.keys(changes).map((k) => [k, 1] as [string, number])) });
+  const abs = "tmp/labs-playgrounds/abc/workspace/index.html"; // what the old normPath leaves of an absolute path
+  test("the host-prefixed path folds into the lab's own path: ONE card", () => {
+    const m = buildCards([{ index: 0, paths: [abs] }], new Map([[0, ["index.html"]]]), host({ "index.html": { status: "added", add: 47, del: 0 } }));
+    expect(m.get(0)!.map((c) => c.path)).toEqual(["index.html"]);
+  });
+  test("a nested lab path matches by trailing segments, longest wins", () => {
+    const m = buildCards([{ index: 0, paths: ["tmp/ws/src/a.js"] }], new Map(), host({ "a.js": { status: "added", add: 1, del: 0 }, "src/a.js": { status: "added", add: 2, del: 0 } }));
+    expect(m.get(0)!.map((c) => c.path)).toEqual(["src/a.js"]);
+  });
+  test("with the root known nothing is folded", () => {
+    const m = buildCards([{ index: 0, paths: ["x/index.html"] }], new Map(), host({ "index.html": { status: "added", add: 1, del: 0 } }), { rootKnown: true });
+    expect(m.get(0)!.map((c) => c.path)).toEqual(["x/index.html"]);
   });
 });

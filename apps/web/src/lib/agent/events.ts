@@ -2,7 +2,7 @@
 // controller holds the state in $state; tests hold a plain object). Shapes verified against a live 2.4.1
 // server (see docs in the PR): events are `{id, type, data:{sessionID, ...}}`.
 import { mapAgentError, isAbort, type StructuredError, type UiError } from "./errors";
-import { editPathsOf } from "./edits";
+import { editPathsOf, normPath, rootVariants } from "./edits";
 import { permissionFromPayload, type UiPermission } from "./permissions";
 
 export type ToolStatus = "running" | "done" | "error";
@@ -24,8 +24,10 @@ export interface ChatState {
   retry: { error: UiError; attempt: number } | null;
   /** Approvals the agent is waiting on (`permission.asked`). Empty in a normal lab: the workspace is pre-approved. */
   permissions: UiPermission[];
+  /** The agent server's working directory (the workspace root), once known. Tool-call paths are shown relative to it. */
+  roots?: string[];
 }
-export const newChatState = (): ChatState => ({ messages: [], running: false, retry: null, permissions: [] });
+export const newChatState = (roots?: string[]): ChatState => ({ messages: [], running: false, retry: null, permissions: [], ...(roots ? { roots } : {}) });
 
 export interface AgentEvent { id?: string; type: string; data?: Record<string, any> }
 
@@ -34,9 +36,11 @@ const clip = (s: string, n = 70) => (s.length > n ? `${s.slice(0, n - 1)}…` : 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
 /** Human label for a tool call, e.g. "Editing index.html". Input keys differ per tool; look at the common ones. */
-export function toolLabel(name: string, input?: Record<string, unknown>): string {
+export function toolLabel(name: string, input?: Record<string, unknown>, root?: string | string[] | null): string {
   const i = input ?? {};
-  const path = str(i.path) || str(i.filePath) || str(i.file_path) || str(i.file) || str(i.filename);
+  const raw = str(i.path) || str(i.filePath) || str(i.file_path) || str(i.file) || str(i.filename);
+  // models pass absolute host paths: show the workspace-relative one (paths outside the workspace stay as given)
+  const path = raw && rootVariants(root).length ? normPath(raw, root) || "." : raw;
   const n = name.toLowerCase();
   if (n === "read") return path ? `Reading ${clip(path)}` : "Reading a file";
   if (n === "write") return path ? `Writing ${clip(path)}` : "Writing a file";
@@ -160,7 +164,7 @@ export function applyEvent(st: ChatState, ev: AgentEvent): void {
     }
     case "session.tool.called": {
       const p = toolPart(assistant(st, str(d.assistantMessageID)), str(d.id));
-      p.label = toolLabel(p.name, d.input); p.paths = editPathsOf(p.name, d.input); return;
+      p.label = toolLabel(p.name, d.input, st.roots); p.paths = editPathsOf(p.name, d.input, st.roots); return;
     }
     case "session.tool.success": {
       const p = toolPart(assistant(st, str(d.assistantMessageID)), str(d.id));
@@ -191,8 +195,8 @@ export function applyEvent(st: ChatState, ev: AgentEvent): void {
 
 // --- history --------------------------------------------------------------------------------------------------
 /** Rebuild UI state from `GET /api/session/:id/message?order=desc` (oldest first). */
-export function stateFromMessages(msgs: any[], running = false): ChatState {
-  const st = newChatState();
+export function stateFromMessages(msgs: any[], running = false, roots?: string[]): ChatState {
+  const st = newChatState(roots);
   st.running = running;
   for (const m of msgs) {
     if (m.type === "user") {
@@ -206,7 +210,7 @@ export function stateFromMessages(msgs: any[], running = false): ChatState {
           const s = c.state?.status;
           const status: ToolStatus = s === "completed" ? "done" : s === "error" ? "error" : "running";
           const out = toolOutput(c.state?.content) || (status === "error" ? str(c.state?.error?.message) : "");
-          parts.push({ type: "tool", id: c.id, name: c.name, status, label: toolLabel(c.name, c.state?.input), paths: editPathsOf(c.name, c.state?.input), ...(out && keepOutput(c.name, status) ? { output: out } : {}) });
+          parts.push({ type: "tool", id: c.id, name: c.name, status, label: toolLabel(c.name, c.state?.input, roots), paths: editPathsOf(c.name, c.state?.input, roots), ...(out && keepOutput(c.name, status) ? { output: out } : {}) });
         }
       }
       // a tool that never finished in a stored turn is not running any more

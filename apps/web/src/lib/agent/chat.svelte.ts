@@ -33,6 +33,8 @@ export class ChatController {
   /** Non-blocking: this workspace has no class seat, so the agent would fall back to a limited free model. */
   noKey = $state(false);
   sessionId = $state<string | null>(null);
+  /** The workspace root as the agent server reports it; paths in tool calls are made relative to it. Null = unknown. */
+  root = $state<string[] | null>(null);
   loading = $state(false);
 
   /** The lab page's change tracking + editor (set by the page). Edit cards, editor refresh and save-before-send use it. */
@@ -84,6 +86,7 @@ export class ChatController {
       return;
     }
     this.agent = "up";
+    await this.loadRoot(); // before any event or history is mapped, so paths are normalized from the start
     this.unsub ??= this.client.subscribe({
       onEvent: (ev) => this.onEvent(ev),
       onState: (s) => this.onConnState(s),
@@ -93,6 +96,17 @@ export class ChatController {
     if (typeof window !== "undefined") window.addEventListener("online", this.onlineHandler);
     await this.restore();
     this.phase = "ready";
+  }
+
+  private rootsOf = () => (this.root ? [...this.root] : undefined);
+  private rootLoad: Promise<void> | null = null;
+  /** Ask the server for the workspace root (cached by the client). A failure leaves it unknown; callers retry later. */
+  private loadRoot(): Promise<void> {
+    if (this.root) return Promise.resolve();
+    return (this.rootLoad ??= (async () => {
+      const r = await Promise.race([this.client.location(), new Promise<null>((res) => setTimeout(() => res(null), 4000))]).catch(() => null);
+      if (r) { this.root = r; this.chat.roots = [...r]; }
+    })().finally(() => { this.rootLoad = null; }));
   }
 
   private onConnState(s: ConnState) {
@@ -141,7 +155,8 @@ export class ChatController {
         ]);
         if (this.sessionId !== id) return;
         const wasRunning = this.chat.running;
-        const next = mergeSnapshot(stateFromMessages(msgs, active.has(id)), this.chat);
+        if (!this.root) await this.loadRoot(); // an earlier attempt failed: try again now
+        const next = mergeSnapshot(stateFromMessages(msgs, active.has(id), this.rootsOf()), this.chat);
         next.permissions = perms.map((p) => permissionFromPayload(p)).filter((p): p is NonNullable<typeof p> => !!p);
         this.chat = next;
         // a turn that ended while we were away (its end event was missed): close it out so the edit cards appear
@@ -171,6 +186,7 @@ export class ChatController {
     if (ev.type === "session.execution.started" && !this.snap) this.beginTurn();
     if (this.syncing) this.dirty = true;
     const was = this.chat.running;
+    if (!this.root && ev.type === "session.tool.called") void this.loadRoot().then(() => { if (this.root) void this.resync(); });
     applyEvent(this.chat, ev);
     if (ev.type === "session.tool.success") void this.host?.syncNow(); // open editors follow the agent while it works
     if (ev.type === "session.execution.succeeded" || ev.type === "session.execution.failed" || ev.type === "session.execution.interrupted") void this.finishTurn();
@@ -296,7 +312,7 @@ export class ChatController {
   async newConversation() {
     const old = this.sessionId;
     this.sessionId = null;
-    this.chat = newChatState();
+    this.chat = newChatState(this.rootsOf());
     this.turnChanged = {}; this.snap = null;
     writeSessionId(this.workspaceId, null);
     if (old) { try { await this.client.interrupt(old); } catch { /* idle already */ } }
