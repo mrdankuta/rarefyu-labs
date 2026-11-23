@@ -3,16 +3,18 @@
 // server (see docs in the PR): events are `{id, type, data:{sessionID, ...}}`.
 import { mapAgentError, isAbort, type StructuredError, type UiError } from "./errors";
 import { editPathsOf } from "./edits";
+import { permissionFromPayload, type UiPermission } from "./permissions";
 
 export type ToolStatus = "running" | "done" | "error";
 export type UiPart =
   | { type: "text"; key: string; text: string }
-  | { type: "tool"; id: string; name: string; status: ToolStatus; label: string; /** files this call writes (edit cards) */ paths?: string[] };
+  | { type: "tool"; id: string; name: string; status: ToolStatus; label: string; /** files this call writes (edit cards) */ paths?: string[]; /** Command output or the failure reason (shown collapsed when long). */ output?: string };
 export type UiMessage =
   | { kind: "user"; id: string; text: string; pending?: boolean }
   | { kind: "assistant"; id: string; parts: UiPart[] }
   | { kind: "stopped"; id: string }
-  | { kind: "error"; id: string; error: UiError };
+  | { kind: "error"; id: string; error: UiError }
+  | { kind: "notice"; id: string; text: string };
 
 export interface ChatState {
   messages: UiMessage[];
@@ -20,8 +22,10 @@ export interface ChatState {
   running: boolean;
   /** The server is retrying after a model error (429 / 5xx); cleared when a step makes progress. */
   retry: { error: UiError; attempt: number } | null;
+  /** Approvals the agent is waiting on (`permission.asked`). Empty in a normal lab: the workspace is pre-approved. */
+  permissions: UiPermission[];
 }
-export const newChatState = (): ChatState => ({ messages: [], running: false, retry: null });
+export const newChatState = (): ChatState => ({ messages: [], running: false, retry: null, permissions: [] });
 
 export interface AgentEvent { id?: string; type: string; data?: Record<string, any> }
 
@@ -45,6 +49,19 @@ export function toolLabel(name: string, input?: Record<string, unknown>): string
   if (n === "task") return "Working with a helper agent";
   return `Using ${name}`;
 }
+
+/** Text of a tool result (`content: [{type:"text", text}]`), minus OpenCode's internal <tool-repair> notes. Empty if none. */
+export function toolOutput(content: unknown): string {
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((c) => (c && typeof c === "object" && (c as any).type === "text" && typeof (c as any).text === "string" ? (c as any).text : ""))
+    .join("\n")
+    .replace(/<tool-repair>[\s\S]*?<\/tool-repair>\s*/g, "")
+    .trim();
+}
+/** Tools whose result text is just a confirmation ("Created file successfully"): not worth showing. */
+const QUIET_TOOLS = new Set(["read", "write", "edit", "patch", "multiedit", "apply_patch", "glob", "list", "ls", "grep", "todowrite", "todoread"]);
+const keepOutput = (name: string, status: ToolStatus) => status === "error" || !QUIET_TOOLS.has(name.toLowerCase());
 
 // --- helpers --------------------------------------------------------------------------------------------------
 function assistant(st: ChatState, id: string) {
@@ -107,13 +124,13 @@ export function applyEvent(st: ChatState, ev: AgentEvent): void {
     case "session.execution.started":
       st.running = true; st.retry = null; return;
     case "session.execution.succeeded":
-      st.running = false; st.retry = null; return;
+      st.running = false; st.retry = null; st.permissions = []; return;
     case "session.execution.interrupted":
-      st.running = false; st.retry = null;
+      st.running = false; st.retry = null; st.permissions = [];
       st.messages.push({ kind: "stopped", id: localId("stop") });
       return;
     case "session.execution.failed": {
-      st.running = false; st.retry = null;
+      st.running = false; st.retry = null; st.permissions = [];
       if (isAbort(d.error)) { st.messages.push({ kind: "stopped", id: localId("stop") }); return; }
       const e = mapAgentError(d.error);
       if (e) pushError(st, e);
@@ -145,10 +162,28 @@ export function applyEvent(st: ChatState, ev: AgentEvent): void {
       const p = toolPart(assistant(st, str(d.assistantMessageID)), str(d.id));
       p.label = toolLabel(p.name, d.input); p.paths = editPathsOf(p.name, d.input); return;
     }
-    case "session.tool.success":
-      toolPart(assistant(st, str(d.assistantMessageID)), str(d.id)).status = "done"; return;
-    case "session.tool.failed":
-      toolPart(assistant(st, str(d.assistantMessageID)), str(d.id)).status = "error"; return;
+    case "session.tool.success": {
+      const p = toolPart(assistant(st, str(d.assistantMessageID)), str(d.id));
+      p.status = "done";
+      const out = toolOutput(d.content);
+      if (out && keepOutput(p.name, "done")) p.output = out;
+      return;
+    }
+    case "session.tool.failed": {
+      const p = toolPart(assistant(st, str(d.assistantMessageID)), str(d.id));
+      p.status = "error";
+      const out = toolOutput(d.content) || str(d.error?.message);
+      if (out) p.output = out;
+      return;
+    }
+    case "permission.asked": {
+      const perm = permissionFromPayload(d);
+      if (perm && !st.permissions.some((x) => x.id === perm.id)) st.permissions.push(perm);
+      return;
+    }
+    case "permission.replied":
+      st.permissions = st.permissions.filter((x) => x.id !== str(d.requestID));
+      return;
     default:
       return;
   }
@@ -169,7 +204,9 @@ export function stateFromMessages(msgs: any[], running = false): ChatState {
         if (c.type === "text" && c.text) parts.push({ type: "text", key: `text-${ord++}`, text: c.text });
         else if (c.type === "tool") {
           const s = c.state?.status;
-          parts.push({ type: "tool", id: c.id, name: c.name, status: s === "completed" ? "done" : s === "error" ? "error" : "running", label: toolLabel(c.name, c.state?.input), paths: editPathsOf(c.name, c.state?.input) });
+          const status: ToolStatus = s === "completed" ? "done" : s === "error" ? "error" : "running";
+          const out = toolOutput(c.state?.content) || (status === "error" ? str(c.state?.error?.message) : "");
+          parts.push({ type: "tool", id: c.id, name: c.name, status, label: toolLabel(c.name, c.state?.input), paths: editPathsOf(c.name, c.state?.input), ...(out && keepOutput(c.name, status) ? { output: out } : {}) });
         }
       }
       // a tool that never finished in a stored turn is not running any more
@@ -182,6 +219,21 @@ export function stateFromMessages(msgs: any[], running = false): ChatState {
         if (isAbort(m.error as StructuredError)) st.messages.push({ kind: "stopped", id: m.id });
         else { const e = mapAgentError(m.error); if (e) st.messages.push({ kind: "error", id: m.id, error: e }); }
       }
+    }
+  }
+  return st;
+}
+
+/**
+ * Rebuild the transcript from a server snapshot while keeping what only exists locally: notices, local errors and a
+ * prompt that is still being sent. Pure (tested).
+ */
+export function mergeSnapshot(snapshot: ChatState, old: ChatState): ChatState {
+  const st = snapshot;
+  for (const m of old.messages) {
+    if (m.kind === "notice" || (m.kind === "error" && m.id.startsWith("err-"))) st.messages.push(m);
+    else if (m.kind === "user" && m.pending && !st.messages.some((x) => x.kind === "user" && x.text === m.text && !old.messages.some((o) => o.id === x.id))) {
+      st.messages.push(m); st.running = true; // the prompt is on its way: keep the optimistic bubble and the working state
     }
   }
   return st;

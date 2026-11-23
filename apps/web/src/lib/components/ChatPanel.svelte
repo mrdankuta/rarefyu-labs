@@ -4,13 +4,16 @@
   import { renderMarkdown } from "$lib/agent/markdown";
   import { buildCards, lastAssistantIds, turnsOf, type Card } from "$lib/agent/edits";
   import EditCards from "./EditCards.svelte";
+  import { copyButtons } from "$lib/agent/copy";
+  import Collapsible from "./Collapsible.svelte";
+  import PermissionCard from "./PermissionCard.svelte";
 
   let { ctl }: { ctl: ChatController } = $props();
   let draft = $state("");
   let list: HTMLDivElement | undefined = $state();
   let stick = true; // follow the stream unless the student scrolled up
 
-  const ready = $derived(ctl.phase === "ready");
+  const ready = $derived(ctl.phase === "ready" && ctl.agent === "up");
   const busy = $derived(ctl.chat.running);
   // Edit cards: drawn under the last assistant message of each finished turn.
   const cardsAt = $derived.by(() => {
@@ -36,7 +39,7 @@
   }
   $effect(() => {
     // re-run on any transcript change (text deltas included) and keep the latest in view
-    ctl.chat.messages.length; ctl.chat.running; ctl.chat.retry;
+    ctl.chat.messages.length; ctl.chat.running; ctl.chat.retry; ctl.chat.permissions.length;
     for (const m of ctl.chat.messages) if (m.kind === "assistant") for (const p of m.parts) if (p.type === "text") p.text.length;
     if (stick) tick().then(() => { if (list) list.scrollTop = list.scrollHeight; });
   });
@@ -56,15 +59,12 @@
 <div class="chat">
   <div class="top">
     <span class="ttl">Agent chat</span>
-    {#if ctl.conn === "reconnecting" && ready}<span class="chip warn" title="Reconnecting to the agent">reconnecting…</span>{/if}
     <span class="sp"></span>
     <button class="ghost" onclick={() => ctl.newConversation()} disabled={!ready || (empty && !busy)} title="Start a fresh conversation">New conversation</button>
   </div>
 
   {#if ctl.fatal}
     <div class="banner err" role="alert"><b>{ctl.fatal.title}</b><span>{ctl.fatal.hint}</span></div>
-  {:else if ctl.phase === "starting" || ctl.phase === "idle"}
-    <div class="banner info" role="status"><span class="spin"></span><b>Starting the agent…</b><span>This takes a few seconds the first time.</span></div>
   {/if}
   {#if ctl.noKey && ready}
     <div class="banner warn" role="status"><b>No class key is set up for this workspace.</b><span>The agent may use a limited free model. Join with your class code from the start page, or ask your facilitator.</span></div>
@@ -81,16 +81,19 @@
         <div class="msg assistant">
           {#each m.parts as p (p.type === "text" ? p.key : p.id)}
             {#if p.type === "text"}
-              <div class="md">{@html renderMarkdown(p.text)}</div>
+              <div class="md" use:copyButtons={p.text}>{@html renderMarkdown(p.text)}</div>
             {:else}
               <div class="tool" class:run={p.status === "running"} class:fail={p.status === "error"} data-tool={p.name}>
                 <span class="ic" aria-hidden="true">{#if p.status === "running"}<i class="spin sm"></i>{:else if p.status === "error"}✕{:else}✓{/if}</span>
                 <span class="lbl">{p.label}</span>
               </div>
+              {#if p.output}<Collapsible text={p.output} tone={p.status === "error" ? "error" : "plain"} />{/if}
             {/if}
           {/each}
           {#if ctl.host && cardsAt.get(m.id)}<EditCards host={ctl.host} cards={cardsAt.get(m.id)!} locked={busy} />{/if}
         </div>
+      {:else if m.kind === "notice"}
+        <div class="note notice" role="status">{m.text}</div>
       {:else if m.kind === "stopped"}
         <div class="note stopped">Stopped. You can send a new message.</div>
       {:else}
@@ -100,14 +103,23 @@
     {#if ctl.chat.retry}
       <div class="note retry" role="status" data-kind={ctl.chat.retry.error.kind}><b>{ctl.chat.retry.error.title}</b><span>Retrying automatically (attempt {ctl.chat.retry.attempt}). Press Stop to cancel.</span></div>
     {/if}
-    {#if busy}
-      <div class="working" role="status"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>Working…</div>
-    {/if}
+    {#each ctl.chat.permissions as perm (perm.id)}
+      <PermissionCard {perm} onanswer={(d) => ctl.answerPermission(perm.id, d)} />
+    {/each}
   </div>
+
+  {#if ctl.status.kind !== "idle"}
+    <div class="status {ctl.status.kind}" class:working={ctl.status.kind === "working"} role="status" data-status={ctl.status.kind}>
+      {#if ctl.status.kind === "working"}<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+      {:else if ctl.status.kind !== "unavailable"}<span class="spin sm" aria-hidden="true"></span>{/if}
+      <span>{ctl.status.text}{ctl.status.kind === "working" ? "…" : ""}</span>
+      {#if ctl.status.restart}<button type="button" class="restart" onclick={() => ctl.restart()}>Restart</button>{/if}
+    </div>
+  {/if}
 
   <form class="composer" onsubmit={(e) => { e.preventDefault(); void submit(); }}>
     <textarea rows="2" bind:value={draft} onkeydown={onKey} disabled={!ready} aria-label="Message the agent"
-      placeholder={ready ? "Ask the agent to build something…" : "Starting the agent…"}></textarea>
+      placeholder={ready ? "Ask the agent to build something…" : ctl.agent === "up" && ctl.phase !== "failed" ? "Starting the agent…" : "The agent is not running"}></textarea>
     {#if busy}
       <button type="button" class="stop" onclick={() => ctl.stop()} aria-label="Stop">■ Stop</button>
     {:else}
@@ -158,7 +170,14 @@
   .note.stopped{color:var(--muted);background:var(--surface2);align-self:flex-start}
   .note.cerror{background:var(--danger-soft);border-color:var(--danger)}.note.cerror b{color:var(--danger)}
   .note.retry{background:var(--surface2);border-color:var(--warn)}.note.retry b{color:var(--warn)}
-  .working{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12.5px}
+  .status{display:flex;align-items:center;gap:8px;padding:6px 12px;color:var(--muted);font-size:12.5px;flex:none}
+  .status.restarting,.status.reconnecting,.status.waiting{color:var(--warn)}
+  .status.unavailable{color:var(--danger)}
+  .restart{height:24px;padding:0 12px;border-radius:7px;border:0;background:var(--accent);color:var(--accent-ink);font:600 12px var(--sans);cursor:pointer}
+  .note.notice{background:var(--surface2);color:var(--muted)}
+  .md :global(pre){position:relative}
+  .md :global(button.copy){float:right;position:sticky;top:0;right:0;margin:-4px -6px 0 8px;padding:1px 8px;border-radius:6px;border:1px solid var(--term-line);background:rgba(255,255,255,.08);color:#cfe0e6;font:11px var(--sans);cursor:pointer;opacity:.75}
+  .md :global(button.copy:hover){opacity:1}
   .dots{display:inline-flex;gap:3px}
   .dots i{width:5px;height:5px;border-radius:50%;background:var(--accent);animation:b 1.1s infinite ease-in-out}
   .dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}

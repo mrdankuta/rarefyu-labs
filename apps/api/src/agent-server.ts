@@ -158,6 +158,11 @@ export class AgentServers {
     return { origin: `http://${addr.host}:${addr.port}`, host: addr.host, port: addr.port, authorization };
   }
 
+  /** Kill the server process (a crash, as far as the chat can tell). Test hook only; the password is kept like after a real crash. */
+  async crash(id: string) {
+    await this.d.stopAgentServer(id);
+  }
+
   /** Forget a workspace's credentials (call when it is destroyed). */
   forget(id: string) {
     this.passwords.delete(id);
