@@ -9,6 +9,8 @@
   import { diffLines, statOf, withContext, type DiffLine } from "$lib/diff";
   import { ChatController } from "$lib/agent/chat.svelte";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
+  import PreviewStatus from "$lib/components/PreviewStatus.svelte";
+  import { PreviewController, type PreviewUi } from "$lib/preview";
   import { EditorState, Compartment } from "@codemirror/state";
   import { EditorView, keymap } from "@codemirror/view";
   import { basicSetup } from "codemirror";
@@ -41,14 +43,44 @@
   // then kept for the life of the page so switching layouts neither drops the conversation nor reconnects.
   let chatCtl = $state<ChatController | null>(null);
   $effect(() => {
-    if (shell === "chat" && id && !chatCtl) { chatCtl = new ChatController(id); void chatCtl.start(); }
+    if (shell === "chat" && id && !chatCtl) {
+      chatCtl = new ChatController(id);
+      chatCtl.onTurnEnd = () => { void previewCtl?.ensure({ reload: true }); }; // once per turn, never per token
+      void chatCtl.start();
+    }
   });
+  // Preview automation (issue #54): the lab makes sure a web project is served, and refreshes at turn end.
+  let previewCtl: PreviewController | null = null;
+  let pv = $state<{ ui: PreviewUi; port: number | null; hint: string }>({ ui: "idle", port: null, hint: "" });
+  let previewFrame = $state<HTMLIFrameElement | null>(null);
+  function startPreview() {
+    if (!id || shell !== "chat" || !previewTab) return;
+    previewCtl ??= new PreviewController(API, id, {
+      onChange: (s) => { pv = s; },
+      onPort: (port) => {
+        // The API owns the port (local workspaces each get their own). Adopt it unless the student typed one.
+        const t = previewTab;
+        if (t && !t.params.userPort && t.params.port !== port) { t.params.port = port; bstate[t.id] = { ready: false }; persistLayout(); }
+      },
+      onNotReady: () => { if (previewTab) bstate[previewTab.id] = { ready: false }; },
+      onReady: (_port, reload) => {
+        const t = previewTab;
+        if (!t) return;
+        if (reload && bstate[t.id]?.ready) reloadPreviewFrame(); else void checkBrowser(t.id, true);
+      },
+    });
+    void previewCtl.ensure();
+  }
+  /** Reload the page inside the preview in place (same origin): the browser keeps the scroll position where it can. */
+  function reloadPreviewFrame() {
+    try { previewFrame?.contentWindow?.location.reload(); } catch { if (previewTab) void checkBrowser(previewTab.id, true); }
+  }
   function setShell(l: ShellLayout) {
     if (layoutForced || l === shell) return;
     shell = l;
     storeLayout(l);
     drawer = null;
-    if (l === "chat") { centerView = "preview"; if (previewTab) checkBrowser(previewTab.id, true); }
+    if (l === "chat") { centerView = "preview"; if (previewTab) checkBrowser(previewTab.id, true); startPreview(); }
     // xterm can't measure while rearranged/hidden: refit (no reconnect) once the new layout has painted.
     requestAnimationFrame(() => requestAnimationFrame(refitTerms));
   }
@@ -922,6 +954,7 @@
     const n = Math.round(Number(v));
     if (!Number.isInteger(n) || n < 1 || n > 65535) return;
     tab.params.port = n;
+    tab.params.userPort = true;
     bstate[tab.id] = { ready: false, hint: `waiting for :${n}. Start your app and this pane goes live.` };
     persistLayout();
     checkBrowser(tab.id, true);
@@ -1039,6 +1072,7 @@
       loadAgentStatus(); loadTrack();
       await loadLayout();
       ensurePreviewTab();
+      startPreview();
       void refreshTree();
       if (termTabs.some((t) => t.id === runTab)) setTimeout(() => attachTerm(runTab), 0);
       const first = edTabs.find((t) => t.id === restoreEditorId) ?? edTabs[0];
@@ -1054,6 +1088,7 @@
   });
   onDestroy(() => {
     chatCtl?.dispose();
+    previewCtl?.dispose();
     if (pollTimer) clearInterval(pollTimer);
     if (typeof window !== "undefined") {
       window.removeEventListener("resize", refitTerms);
@@ -1242,7 +1277,9 @@
             <input class="path" aria-label="preview path" value={String(previewTab.params.path ?? "/")} onchange={(e) => setBrowserPath(previewTab!, e.currentTarget.value)} />
           </div>
           {#if bstate[previewTab.id]?.ready}
-            <iframe title="preview" src={`${bstate[previewTab.id].url}${String(previewTab.params.path ?? "/").replace(/^\//, "")}`} style="flex:1;border:0;background:#fff" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+            <iframe bind:this={previewFrame} title="preview" src={`${bstate[previewTab.id].url}${String(previewTab.params.path ?? "/").replace(/^\//, "")}`} style="flex:1;border:0;background:#fff" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+          {:else if shell === "chat"}
+            <PreviewStatus ui={pv.ui} hint={pv.hint} onretry={() => void previewCtl?.ensure({ retry: true })} />
           {:else}
             <div class="prev"><div>◷ {bstate[previewTab.id]?.hint ?? `Waiting for :${previewTab.params.port ?? 3000}.`}<br /><span class="mut">Start your app in the terminal, for example <code>npx serve .</code>. This pane goes live on its own.</span></div></div>
           {/if}

@@ -56,7 +56,7 @@ export async function ensurePreview(id: string, opts: { retry?: boolean; driver?
   const d = opts.driver ?? defaultDriver;
   const now = opts.now ?? Date.now();
   const port = await d.previewPort(id);
-  if (await serving(d, id, port)) return { state: "ready", port };
+  if (await serving(d, id, port)) { started.delete(id); return { state: "ready", port }; } // a later crash restarts cleanly
 
   const prev = started.get(id);
   if (prev && !opts.retry) {

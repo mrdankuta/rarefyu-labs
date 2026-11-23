@@ -18,6 +18,9 @@ export class ChatController {
   sessionId = $state<string | null>(null);
   loading = $state(false);
 
+  /** Called once when a live turn ends (succeeded, failed or interrupted), never per streamed token. The page refreshes the preview here. */
+  onTurnEnd: (() => void) | null = null;
+
   private client: AgentClient;
   private unsub: (() => void) | null = null;
   private starting: Promise<void> | null = null;
@@ -81,7 +84,9 @@ export class ChatController {
 
   private onEvent(ev: AgentEvent) {
     if (!this.sessionId || ev.data?.sessionID !== this.sessionId) return;
+    const was = this.chat.running;
     applyEvent(this.chat, ev);
+    if (was && !this.chat.running) this.onTurnEnd?.();
   }
 
   async send(raw: string) {
