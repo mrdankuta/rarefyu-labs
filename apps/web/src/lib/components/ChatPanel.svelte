@@ -79,7 +79,7 @@
       {/if}
     {/each}
     {#if ctl.chat.retry}
-      <div class="note retry" role="status" data-kind={ctl.chat.retry.error.kind}><b>{ctl.chat.retry.error.title}</b><span>{ctl.chat.retry.error.hint} Retrying automatically (attempt {ctl.chat.retry.attempt}). You can also press Stop.</span></div>
+      <div class="note retry" role="status" data-kind={ctl.chat.retry.error.kind}><b>{ctl.chat.retry.error.title}</b><span>Retrying automatically (attempt {ctl.chat.retry.attempt}). Press Stop to cancel.</span></div>
     {/if}
     {#if busy}
       <div class="working" role="status"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>Working…</div>
@@ -88,13 +88,14 @@
 
   <form class="composer" onsubmit={(e) => { e.preventDefault(); void submit(); }}>
     <textarea rows="2" bind:value={draft} onkeydown={onKey} disabled={!ready} aria-label="Message the agent"
-      placeholder={ready ? "Ask the agent to build something…  (Enter to send, Shift+Enter for a new line)" : "Starting the agent…"}></textarea>
+      placeholder={ready ? "Ask the agent to build something…" : "Starting the agent…"}></textarea>
     {#if busy}
       <button type="button" class="stop" onclick={() => ctl.stop()} aria-label="Stop">■ Stop</button>
     {:else}
       <button type="submit" class="send" disabled={!ready || !draft.trim()} aria-label="Send">Send</button>
     {/if}
   </form>
+  <div class="keys">Enter to send · Shift+Enter for a new line</div>
 </div>
 
 <style>
@@ -150,6 +151,8 @@
   textarea{flex:1;min-width:0;resize:none;max-height:140px;padding:8px 12px;border-radius:9px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font:13.5px/1.45 var(--sans)}
   textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
   textarea:disabled{opacity:.6}
+  .keys{padding:0 12px 8px;font-size:11px;color:var(--faint);flex:none}
+  .composer{padding-bottom:4px}
   .send,.stop{height:38px;padding:0 16px;border:0;border-radius:9px;font:600 13.5px var(--sans);cursor:pointer;flex:none}
   .send{background:var(--accent);color:var(--accent-ink)}
   .send:disabled{opacity:.5;cursor:not-allowed}
