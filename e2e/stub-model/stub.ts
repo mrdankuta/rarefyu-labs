@@ -11,6 +11,7 @@
  *   [[longout]]   ask for a `bash` call printing 120 lines, then a final text reply
  *   [[longerr]]   ask for a `bash` call that prints 80 lines to stderr and exits 1, then a final text reply
  *   [[site:TEXT]] ask for a `write` tool call that writes index.html (`<h1 id="t">TEXT</h1>` plus a tall spacer), then a final text reply
+ *   [[call:NAME:{json}]]   ask for any tool call with those arguments, then a final text reply
  *   [[401]] [[429]] [[500]]   respond with that HTTP status and a provider-style JSON error body
  * Every request is recorded in `requests` (authorization header + body) for assertions.
  */
@@ -35,6 +36,8 @@ function lastUserText(messages: any[]): string {
 }
 
 function toolFor(text: string): { name: string; args: object } | null {
+  const raw = /\[\[call:(\w+):(\{.*?\})\]\]/s.exec(text); // generic: [[call:NAME:{json args}]]
+  if (raw) { try { return { name: raw[1]!, args: JSON.parse(raw[2]!) }; } catch { /* fall through */ } }
   const site = /\[\[site:([^\]]*)\]\]/.exec(text);
   if (site) return { name: "write", args: { path: "index.html", content: `<!doctype html><html><body><h1 id="t">${site[1]}</h1><div style="height:3000px"></div><p id="end">bottom</p></body></html>\n` } };
   if (text.includes("[[tool]]")) return { name: "write", args: { path: "hello.txt", content: "hello from the stub\n" } };

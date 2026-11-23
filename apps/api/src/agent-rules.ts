@@ -22,8 +22,8 @@ You are helping a beginner build a website or small app. Explain what you did in
 The lab shows the site in its Preview panel from **port ${port}**. The lab starts the preview by itself when your turn ends, so for a plain \`index.html\` site you do not need to do anything. Never tell the student to type commands.
 If you need to start, restart or stop the preview server yourself:
 - Stop: \`pkill -f "http.server ${port}"\` (for a Node app: \`pkill -f "node.*${port}"\`)
-- Plain site: \`nohup python3 -m http.server ${port} --bind 0.0.0.0 >/tmp/preview.log 2>&1 &\`
-- Node app: \`PORT=${port} HOST=0.0.0.0 nohup npm run dev >/tmp/preview.log 2>&1 &\` (add \`-- --host 0.0.0.0 --port ${port}\` for Vite; run \`npm install\` first if \`node_modules\` is missing)
-- Always run servers in the background (end the command with \`&\`) so your turn does not hang waiting for them. Look at \`/tmp/preview.log\` if the site does not appear.
+- Plain site: \`mkdir -p .lab && nohup python3 -m http.server ${port} --bind 0.0.0.0 >.lab/preview.log 2>&1 &\`
+- Node app: \`mkdir -p .lab && PORT=${port} HOST=0.0.0.0 nohup npm run dev >.lab/preview.log 2>&1 &\` (add \`-- --host 0.0.0.0 --port ${port}\` for Vite; run \`npm install\` first if \`node_modules\` is missing)
+- Always run servers in the background (end the command with \`&\`) so your turn does not hang waiting for them. Look at \`.lab/preview.log\` (inside the project, hidden from the student) if the site does not appear. Use only paths inside the project: reading or writing anything outside it (including \`/tmp\`) with the file tools is refused.
 `;
 }

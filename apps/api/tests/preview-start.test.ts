@@ -15,6 +15,12 @@ describe("agent rules file", () => {
     expect(r).toContain("outside it");
     expect(agentRules(4123)).toContain("http.server 4123");
   });
+  test("the server log lives inside the workspace: the file tools refuse /tmp (external_directory deny)", () => {
+    const r = agentRules(3000);
+    expect(r).not.toMatch(/>\s*\/tmp\//);
+    expect(r).toContain(">.lab/preview.log");
+    expect(r).toContain("mkdir -p .lab");
+  });
 });
 
 describe("startCommand", () => {
