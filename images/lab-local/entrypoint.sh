@@ -3,6 +3,8 @@
 # If any of them dies the container exits, so `docker restart`/the launcher brings it all back.
 set -u
 cd /opt/lab
+# Forward stop signals so the api can flush its sessions before exiting.
+trap 'kill $(jobs -p) 2>/dev/null; wait; exit 0' TERM INT
 API_PORT=3100 bun ./apps/api/src/index.ts &
 (cd apps/web && PORT=3101 HOST=127.0.0.1 bun ./build/index.js) &
 caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &

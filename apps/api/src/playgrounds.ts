@@ -235,6 +235,23 @@ export function nukePlaygrounds(now?: number): { destroyed: number } {
   return { destroyed };
 }
 
+/** Records worth keeping across an API restart (destroyed ones are history only). */
+export function exportPlaygrounds(): PlaygroundRecord[] {
+  return [...playgrounds.values()].filter((p) => p.status !== "destroyed");
+}
+
+/** Boot-time restore. A record caught mid-create has no trustworthy workspace: mark it destroyed so the reconciler cleans up. */
+export function importPlaygrounds(recs: PlaygroundRecord[]): number {
+  let n = 0;
+  for (const r of recs) {
+    if (playgrounds.has(r.id)) continue;
+    if (r.status === "creating") r.status = "destroyed";
+    playgrounds.set(r.id, r);
+    n++;
+  }
+  return n;
+}
+
 export function getPlayground(id: string) {
   return playgrounds.get(id);
 }
