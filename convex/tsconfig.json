@@ -1,0 +1,7 @@
+{
+  "compilerOptions": {
+    "target": "ESNext", "lib": ["ES2021", "dom"], "module": "ESNext", "moduleResolution": "Bundler",
+    "strict": true, "skipLibCheck": true, "noEmit": true, "isolatedModules": true, "allowJs": false, "forceConsistentCasingInFileNames": true
+  },
+  "include": ["./**/*"], "exclude": ["./_generated"]
+}

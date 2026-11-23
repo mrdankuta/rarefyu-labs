@@ -33,18 +33,18 @@ afterEach(() => {
 });
 
 describe("seat store", () => {
-  test("codes are unique, typable and persisted with 0600 perms", () => {
-    const made = addSeats(Array.from({ length: 60 }, (_, i) => ({ label: `s${i}`, key: `sk-key-number-${i}` })));
+  test("codes are unique, typable and persisted with 0600 perms", async () => {
+    const made = await addSeats(Array.from({ length: 60 }, (_, i) => ({ label: `s${i}`, key: `sk-key-number-${i}` })));
     expect(new Set(made.map((s) => s.code)).size).toBe(60);
     for (const s of made) expect(s.code).toMatch(/^[2-9A-HJKMNP-Z]{4}-[2-9A-HJKMNP-Z]{4}$/);
     expect(statSync(process.env.SEATS_FILE!).mode & 0o777).toBe(0o600);
     resetSeatsCache(); // simulates an API restart
-    expect(listSeats()).toHaveLength(60);
-    expect(findSeatByCode(made[7].code.toLowerCase().replace("-", " "))?.id).toBe(made[7].id);
+    expect(await listSeats()).toHaveLength(60);
+    expect((await findSeatByCode(made[7].code.toLowerCase().replace("-", " ")))?.id).toBe(made[7].id);
   });
 
-  test("credential files carry the key and a default model", () => {
-    const [seat] = addSeats([{ label: "a", key: KEY }]);
+  test("credential files carry the key and a default model", async () => {
+    const [seat] = await addSeats([{ label: "a", key: KEY }]);
     const files = credentialFiles(seat);
     expect(JSON.parse(files[0].content)["opencode-go"]).toEqual({ type: "api", key: KEY });
     expect(JSON.parse(files[1].content).model).toBe("opencode-go/kimi-k3");

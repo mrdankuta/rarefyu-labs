@@ -1,0 +1,12 @@
+# Keep the build context small and stop host artifacts from overwriting the image's own installs.
+**/node_modules
+**/.svelte-kit
+**/build
+**/dist
+.git
+.env
+.env.*
+.convex
+dogfood-output
+e2e/test-results
+**/*.log

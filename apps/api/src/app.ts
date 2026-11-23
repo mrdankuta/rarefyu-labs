@@ -19,7 +19,7 @@ import {
   sweepPlaygrounds,
   takeWoke,
 } from "./playgrounds";
-import { addSeats, credentialFiles, findSeatByCode, listSeats, removeSeat, seatGuessBlocked, type Seat } from "./seats";
+import { SeatBackendError, SeatThrottled, addSeats, credentialFiles, findSeatByCode, listSeats, removeSeat, seatGuessBlocked, type Seat } from "./seats";
 import { driver } from "./drivers";
 import { reconcile } from "./reconcile";
 import { auditEvent } from "./teach";
@@ -155,7 +155,13 @@ app.post("/api/playgrounds", async (c) => {
   if (body.seatCode !== undefined && body.seatCode !== "") {
     const ip = clientIp(c);
     if (seatGuessBlocked(ip, false)) return c.json({ error: "too many wrong codes — wait a minute and try again" }, 429);
-    seat = findSeatByCode(String(body.seatCode));
+    try {
+      seat = await findSeatByCode(String(body.seatCode));
+    } catch (e) {
+      if (e instanceof SeatThrottled) return c.json({ error: "too many wrong codes — wait a minute and try again" }, 429);
+      if (e instanceof SeatBackendError) return c.json({ error: "the class service is unreachable right now — try again in a moment" }, 503);
+      throw e;
+    }
     if (!seat) {
       seatGuessBlocked(ip, true);
       return c.json({ error: "unknown class code — check it and try again" }, 403);
@@ -723,22 +729,22 @@ app.post("/api/admin/seats", async (c) => {
   if (!items.length || items.length > 500) return c.json({ error: "send {seats:[{label,key}]} with 1-500 entries" }, 400);
   if (items.some((s: any) => typeof s?.key !== "string" || s.key.length < 8 || typeof s?.label !== "string" || !s.label.trim()))
     return c.json({ error: "every seat needs a label and a key" }, 400);
-  const made = addSeats(items.map((s: any) => ({ label: s.label.trim(), key: s.key.trim() })));
+  const made = await addSeats(items.map((s: any) => ({ label: s.label.trim(), key: s.key.trim() })));
   auditEvent("operator", "seats-add", "-", String(made.length));
   return c.json({ seats: made.map(({ id, code, label }) => ({ id, code, label })) }, 201);
 });
-app.get("/api/admin/seats", (c) => {
+app.get("/api/admin/seats", async (c) => {
   const deny = seatAdmin(c);
   if (deny) return c.json({ error: deny.error }, deny.status);
   return c.json({
-    seats: listSeats().map(({ id, code, label, createdAt }) => ({ id, code, label, createdAt, workspaceId: liveSessionForSeat(id)?.id ?? null })),
+    seats: (await listSeats()).map(({ id, code, label, createdAt }) => ({ id, code, label, createdAt, workspaceId: liveSessionForSeat(id)?.id ?? null })),
   });
 });
 app.delete("/api/admin/seats/:id", async (c) => {
   const deny = seatAdmin(c);
   if (deny) return c.json({ error: deny.error }, deny.status);
   const id = c.req.param("id");
-  if (!removeSeat(id)) return c.json({ error: "no such seat" }, 404);
+  if (!(await removeSeat(id))) return c.json({ error: "no such seat" }, 404);
   // Revoking a seat also removes its workspace: the key lives in that workspace's home.
   const live = liveSessionForSeat(id);
   if (live) {

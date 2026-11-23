@@ -3,7 +3,11 @@
  * (e.g. an OpenCode Go key). The key never leaves the server except into the
  * student's own workspace home; admin listings show codes, never keys.
  *
- * Persisted as JSON (mode 0600) under DATA_DIR so seats survive API restarts.
+ * Two backends, picked by env:
+ *   CONVEX_URL set → Convex (the class backend; see /convex). Students' containers need
+ *                    only the URL (redeem takes just a code); admin calls also need
+ *                    CONVEX_ADMIN_SECRET.
+ *   otherwise      → JSON file (mode 0600) under DATA_DIR (dev / single host)
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -57,7 +61,7 @@ function save() {
   renameSync(tmp, f);
 }
 
-export function addSeats(input: { label: string; key: string }[]): Seat[] {
+function fileAdd(input: { label: string; key: string }[]): Seat[] {
   load();
   const made = input.map(({ label, key }) => {
     const seat: Seat = { id: crypto.randomUUID(), code: genCode(), label, key, createdAt: new Date().toISOString() };
@@ -69,23 +73,23 @@ export function addSeats(input: { label: string; key: string }[]): Seat[] {
   return made;
 }
 
-export function findSeatByCode(code: string): Seat | undefined {
+function fileFind(code: string): Seat | undefined {
   load();
   const id = byCode.get(normalizeCode(code));
   return id ? seats.get(id) : undefined;
 }
 
-export function getSeat(id: string): Seat | undefined {
+function fileGet(id: string): Seat | undefined {
   load();
   return seats.get(id);
 }
 
-export function listSeats(): Seat[] {
+function fileList(): Seat[] {
   load();
   return [...seats.values()];
 }
 
-export function removeSeat(id: string): boolean {
+function fileRemove(id: string): boolean {
   load();
   const s = seats.get(id);
   if (!s) return false;
@@ -93,6 +97,68 @@ export function removeSeat(id: string): boolean {
   byCode.delete(normalizeCode(s.code));
   save();
   return true;
+}
+
+
+// --- Convex backend (plain HTTP API; no client dependency) ---
+
+/** Too many wrong codes (backend throttle). */
+export class SeatThrottled extends Error {}
+/** Seat backend unreachable or misconfigured. */
+export class SeatBackendError extends Error {}
+
+const convexUrl = () => (process.env.CONVEX_URL ? process.env.CONVEX_URL.replace(/\/$/, "") : null);
+
+async function convex<T>(kind: "query" | "mutation", path: string, args: Record<string, unknown>): Promise<T> {
+  const base = convexUrl()!;
+  let res: Response;
+  try {
+    res = await fetch(`${base}/api/${kind}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path, args, format: "json" }),
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch (e) {
+    throw new SeatBackendError(`seat backend unreachable: ${(e as Error).message}`);
+  }
+  const body: any = await res.json().catch(() => ({}));
+  if (body.status !== "success") throw new SeatBackendError(`seat backend error: ${body.errorMessage ?? res.status}`);
+  return body.value as T;
+}
+const secret = () => process.env.CONVEX_ADMIN_SECRET ?? "";
+
+// --- Public API (async; backend chosen per call) ---
+
+export async function addSeats(input: { label: string; key: string }[]): Promise<Seat[]> {
+  if (!convexUrl()) return fileAdd(input);
+  const made = await convex<{ id: string; code: string; label: string }[]>("mutation", "seats:add", { secret: secret(), seats: input });
+  return made.map((m, i) => ({ ...m, key: input[i].key, createdAt: new Date().toISOString() }));
+}
+
+/** Resolve a class code to its seat, or undefined. Throws SeatThrottled / SeatBackendError on Convex. */
+export async function findSeatByCode(code: string): Promise<Seat | undefined> {
+  if (!convexUrl()) return fileFind(code);
+  const r = await convex<{ ok: true; id: string; label: string; key: string } | { ok: false; reason: "throttled" | "unknown" }>("mutation", "seats:redeem", { code });
+  if (r.ok) return { id: r.id, code: normalizeCode(code), label: r.label, key: r.key, createdAt: "" };
+  if (r.reason === "throttled") throw new SeatThrottled("too many wrong codes");
+  return undefined;
+}
+
+export async function getSeat(id: string): Promise<Seat | undefined> {
+  if (!convexUrl()) return fileGet(id);
+  const r = await convex<{ id: string; code: string; label: string; key: string } | null>("query", "seats:get", { secret: secret(), id });
+  return r ? { ...r, createdAt: "" } : undefined;
+}
+
+export async function listSeats(): Promise<Omit<Seat, "key">[]> {
+  if (!convexUrl()) return fileList().map(({ key: _k, ...rest }) => rest);
+  return convex("query", "seats:list", { secret: secret() });
+}
+
+export async function removeSeat(id: string): Promise<boolean> {
+  if (!convexUrl()) return fileRemove(id);
+  return convex<boolean>("mutation", "seats:remove", { secret: secret(), id });
 }
 
 /** Test helper: forget in-memory state (does not touch the file). */

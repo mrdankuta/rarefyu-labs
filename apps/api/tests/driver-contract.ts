@@ -59,6 +59,15 @@ export function driverContract(name: string, make: () => ExecDriver, opts?: { sk
       term.kill();
     });
 
+    t("after injectCredentials, ~/workspace is the workspace (lessons and agents rely on it)", async () => {
+      const id = sid("home-ws");
+      await d.create(id);
+      await d.injectCredentials(id, [{ path: ".config/probe/x.json", content: "{}" }]);
+      const r = await d.run(id, 'cd ~/workspace && echo from-home > probe.txt');
+      expect(r.exitCode).toBe(0);
+      expect((await d.readFile(id, "probe.txt")).content.trim()).toBe("from-home");
+    });
+
     t("injectCredentials refuses paths that escape the home directory", async () => {
       const id = sid("creds-bad");
       await d.create(id);

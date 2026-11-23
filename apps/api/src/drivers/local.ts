@@ -82,6 +82,8 @@ export class LocalDriver implements ExecDriver {
       await Bun.write(full, f.content);
       await Bun.$`chmod 600 ${full}`.quiet();
     }
+    // Same layout as the Docker driver: the workspace is ~/workspace.
+    await Bun.$`ln -sfn ../workspace ${home}/workspace`.quiet();
     await Bun.write(`${home}/.injected`, "1");
   }
 
