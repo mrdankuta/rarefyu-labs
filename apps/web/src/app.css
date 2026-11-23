@@ -25,3 +25,4 @@
 }
 body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); }
 code, pre, input, .mono, .cm-editor { font-variant-ligatures: none; }
+.wcode, .wterm, .dbody, .sp1, .sp2, .path, .small, .row input, .xin, .termwrap { font-variant-ligatures: none !important; }
