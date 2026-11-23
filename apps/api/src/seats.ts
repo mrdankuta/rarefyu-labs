@@ -182,6 +182,45 @@ export function credentialFiles(seat: Seat, model = process.env.SEAT_DEFAULT_MOD
   ];
 }
 
+/**
+ * OpenCode 2.x keeps credentials in its own database under $HOME/.local/share/opencode.
+ * It migrates the legacy auth.json above only when it first creates that database, so we
+ * make that happen right after injection: `opencode auth list` starts its background
+ * service once (migrating the file), and if the key is still not connected (database
+ * already existed) we fall back to the official `opencode auth import`, which reads the
+ * credential JSON on stdin (never argv) and is idempotent by credential id. The service is
+ * stopped again so nothing keeps running. The database lives in the workspace's HOME, so it
+ * survives hibernate/wake and container recreation (Docker: the per-workspace home volume;
+ * local: the session home) and goes away only with the workspace.
+ * Run right after injectCredentials so the terminal `opencode` works first time, without Chat.
+ */
+export const SEAT_CREDENTIAL_ID = "cred_seat";
+// Output goes to a temp file, not a pipe: `opencode` leaves its background service holding
+// inherited stdout open, so a captured pipe would never reach EOF and the exec would hang.
+const IMPORT_CMD =
+  'unset XDG_DATA_HOME XDG_CONFIG_HOME XDG_STATE_HOME XDG_CACHE_HOME; ' +
+  'bin="${OPENCODE_BIN:-opencode}"; f=$(mktemp) || exit 1; ' +
+  // Local driver only (shared host network): give this workspace's service its own port.
+  '[ -z "$OPENCODE_SERVICE_PORT" ] || "$bin" service set port "$OPENCODE_SERVICE_PORT" >/dev/null 2>&1 </dev/null; ' +
+  'list() { "$bin" auth list >"$f" 2>/dev/null </dev/null; grep -q "OpenCode Go" "$f"; }; ' +
+  'list || { "$bin" auth import >/dev/null 2>&1 && list; }; ok=$?; ' +
+  '"$bin" service stop >/dev/null 2>&1 </dev/null; rm -f "$f"; exit $ok';
+export async function installSeatKey(
+  d: { run(id: string, cmd: string, o?: { timeoutMs?: number; stdin?: string }): Promise<{ exitCode: number; stderr: string }> },
+  sessionId: string,
+  seat: Pick<Seat, "key">,
+): Promise<boolean> {
+  const cred = [{ id: SEAT_CREDENTIAL_ID, integrationID: "opencode-go", label: "OpenCode Go", active: true, value: { type: "key", key: seat.key } }];
+  try {
+    const r = await d.run(sessionId, IMPORT_CMD, { stdin: JSON.stringify(cred), timeoutMs: 30_000 });
+    if (r.exitCode === 0) return true;
+    console.warn(`seat key import failed for ${sessionId} (exit ${r.exitCode})`); // never log stdout/stderr: could echo input
+  } catch (err) {
+    console.warn(`seat key import failed for ${sessionId}: ${(err as Error).name}`);
+  }
+  return false;
+}
+
 /** Failed-code throttle: 10 misses per IP per minute. Returns true when blocked. */
 const misses = new Map<string, number[]>();
 export function seatGuessBlocked(ip: string, failed: boolean, now = Date.now()): boolean {

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { AgentServers } from "../src/agent-server";
 import { agentRoutes } from "../src/agent-proxy";
 import { canAccess } from "../src/app";
+import { credentialFiles, installSeatKey } from "../src/seats";
 import { cookieOfKey, identityKey } from "../src/playgrounds";
 import type { ExecDriver } from "../src/drivers/types";
 
@@ -344,6 +345,9 @@ export function driverContract(name: string, make: () => ExecDriver, opts?: { sk
 }
 
 
+/** opencode CLI in the workspace; stdout/stderr to a file because its background service would hold a pipe open. */
+const CLI = 'unset XDG_DATA_HOME XDG_CONFIG_HOME XDG_STATE_HOME XDG_CACHE_HOME; bin="${OPENCODE_BIN:-opencode}"; [ -z "$OPENCODE_SERVICE_PORT" ] || "$bin" service set port "$OPENCODE_SERVICE_PORT" >/dev/null 2>&1 </dev/null; oc() { "$bin" "$@" >"$HOME/.oc.out" 2>&1 </dev/null; cat "$HOME/.oc.out"; }; oc';
+
 export interface AgentContractOpts {
   skip?: boolean | string;
   /** Running the real pinned opencode binary (else the tiny stub, which also exposes /api/_stub/*). */
@@ -491,6 +495,42 @@ export function agentServerContract(name: string, make: () => ExecDriver, opts: 
       }
       const term = await d.run(id, 'grep -c kimi-k3 "$HOME/.config/opencode/opencode.json"');
       expect(term.stdout.trim()).toBe("1");
+    }, 120_000);
+
+    const real = opts.real ? t : test.skip;
+    real("seat key lands in opencode's own store at injection time: the terminal CLI sees it with no agent server running", async () => {
+      const id = await workspace("termkey");
+      const seat = { key: "sk-contract-terminal" };
+      await d.injectCredentials(id, credentialFiles(seat as never));
+      expect(await installSeatKey(d, id, seat)).toBe(true);
+      const cli = CLI;
+      expect((await servers.status(id)).state).toBe("stopped"); // the API's agent server never ran
+      const listed = await d.run(id, `${cli} auth list`);
+      expect(listed.stdout).toContain("OpenCode Go");
+      expect(listed.stdout).toContain("stored");
+      expect(listed.stdout).not.toContain(seat.key);
+      // Nothing is left running by the import, and running it again does not duplicate.
+      expect(await installSeatKey(d, id, seat)).toBe(true);
+      const exp = await d.run(id, `${cli} auth export | grep -c '"id": "cred_'`);
+      expect(exp.stdout.trim()).toBe("1");
+      // Survives hibernate/wake (HOME persists with the workspace).
+      await d.hibernate(id);
+      await d.wake(id);
+      expect((await d.run(id, `${cli} auth list`)).stdout).toContain("OpenCode Go");
+      await d.run(id, `${cli} service stop >/dev/null 2>&1; true`);
+    }, 120_000);
+
+    real("seat key is installed through the import route when there is no legacy auth.json to migrate", async () => {
+      const id = await workspace("termkey2");
+      const cli = CLI;
+      await d.run(id, `${cli} auth list >/dev/null; ${cli} service stop >/dev/null 2>&1; true`); // creates the database first
+      const seat = { key: "sk-contract-late" };
+      await d.injectCredentials(id, credentialFiles(seat as never).filter((f) => !f.path.endsWith("auth.json")));
+      expect((await d.run(id, `${cli} auth list`)).stdout).not.toContain("OpenCode Go");
+      expect(await installSeatKey(d, id, seat)).toBe(true);
+      expect((await d.run(id, `${cli} auth list`)).stdout).toContain("OpenCode Go");
+      expect((await d.run(id, `${cli} auth export | grep -c '"id": "cred_'`)).stdout.trim()).toBe("1");
+      await d.run(id, `${cli} service stop >/dev/null 2>&1; true`);
     }, 120_000);
 
     t("only sees the workspace directory and only /api/* is forwarded; traversal is refused", async () => {

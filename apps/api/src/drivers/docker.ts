@@ -234,11 +234,12 @@ export class DockerDriver implements ExecDriver {
     }
   }
 
-  async run(sessionId: string, cmd: string, opts?: { timeoutMs?: number }) {
+  async run(sessionId: string, cmd: string, opts?: { timeoutMs?: number; stdin?: string }) {
     await this.ensureRunning(sessionId);
     const secs = Math.max(1, Math.ceil((opts?.timeoutMs ?? 30_000) / 1000));
     const r = await this.exec(sessionId, ["timeout", "-k", "1", String(secs), "bash", "-c", cmd], {
       timeoutMs: (opts?.timeoutMs ?? 30_000) + 5000,
+      stdin: opts?.stdin,
     });
     return r;
   }

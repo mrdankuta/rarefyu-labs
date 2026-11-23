@@ -191,7 +191,7 @@ describe("redeeming a class code", () => {
       ids.push((await res.json()).id);
     }
     await Promise.all(ids.map((id) => driver.destroy(id)));
-  });
+  }, 30_000); // each redemption also installs the key into opencode's store (~1-2s when a real opencode is present)
 
   test("SEATS_REQUIRED blocks code-less anonymous starts", async () => {
     process.env.SEATS_REQUIRED = "1";

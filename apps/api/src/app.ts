@@ -19,7 +19,7 @@ import {
   sweepPlaygrounds,
   takeWoke,
 } from "./playgrounds";
-import { SeatBackendError, SeatThrottled, addSeats, credentialFiles, findSeatByCode, listSeats, removeSeat, seatGuessBlocked, type Seat } from "./seats";
+import { SeatBackendError, SeatThrottled, addSeats, credentialFiles, findSeatByCode, installSeatKey, listSeats, removeSeat, seatGuessBlocked, type Seat } from "./seats";
 import { driver } from "./drivers";
 import { reconcile } from "./reconcile";
 import { auditEvent } from "./teach";
@@ -242,7 +242,10 @@ app.post("/api/playgrounds", async (c) => {
       noteProvisionErr();
       throw err;
     }
-    if (seat) await driver.injectCredentials(rec.id, credentialFiles(seat));
+    if (seat) {
+      await driver.injectCredentials(rec.id, credentialFiles(seat));
+      await installSeatKey(driver, rec.id, seat); // OpenCode 2.x credential store (best effort)
+    }
     noteProvisionOk();
     auditEvent(who.userId ? `user:${who.userId}` : "student", "create", rec.id, rec.mode);
   } catch (err) {

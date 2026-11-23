@@ -63,6 +63,7 @@ class Shell {
 export class LocalDriver implements ExecDriver {
   readonly backend = "local" as const;
   private shells = new Map<string, Shell>(); // `${sessionId}/${termId}`
+  private servicePorts = new Map<string, number>();
   private agents = new Map<string, { proc: ReturnType<typeof Bun.spawn>; port: number }>();
   /** argv prefix for the OpenCode binary (OPENCODE_BIN overrides; tests point it at a stub). */
   private opencode: string[];
@@ -149,14 +150,17 @@ export class LocalDriver implements ExecDriver {
     this.shells.delete(key);
   }
 
-  async run(sessionId: string, cmd: string, opts?: { timeoutMs?: number }) {
+  async run(sessionId: string, cmd: string, opts?: { timeoutMs?: number; stdin?: string }) {
     const dir = this.dir(sessionId);
     await this.create(sessionId);
     const timeout = opts?.timeoutMs ?? 30_000;
     const home = await this.homeIfInjected(sessionId);
+    const servicePort = await this.servicePort(sessionId);
     const proc = Bun.spawn(["bash", "-c", cmd], {
       cwd: dir,
-      env: { ...process.env, ...(home ? { HOME: home } : {}) }, // live copy of the environment
+      // live copy of the environment; OPENCODE_BIN lets commands find the binary this driver was built with
+      env: { ...process.env, ...(home ? { HOME: home } : {}), OPENCODE_BIN: this.opencode[0]!, OPENCODE_SERVICE_PORT: String(servicePort) },
+      stdin: opts?.stdin !== undefined ? new Blob([opts.stdin]) : "ignore",
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -214,6 +218,21 @@ export class LocalDriver implements ExecDriver {
 
   capabilities(): DriverCapabilities {
     return { isolation: "none", hibernate: true };
+  }
+
+  /**
+   * OpenCode 2.x's CLI starts a "managed service" on ONE fixed host port (49374). Local workspaces
+   * share the host network (containers do not), so each gets its own port, which commands that
+   * touch the service apply with `opencode service set port "$OPENCODE_SERVICE_PORT"`.
+   */
+  private async servicePort(sessionId: string): Promise<number> {
+    const known = this.servicePorts.get(sessionId);
+    if (known) return known;
+    const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const p: number = probe.port;
+    probe.stop(true);
+    this.servicePorts.set(sessionId, p);
+    return p;
   }
 
   async startAgentServer(sessionId: string, password: string): Promise<WorkspaceAddress> {
