@@ -18,9 +18,9 @@
 
 <style>
   .out{min-width:0}
-  pre{margin:0;padding:6px 10px;max-height:260px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--term-bg);color:#e8f0f3;border:1px solid var(--term-line);border-radius:7px;font:12px/1.45 var(--mono)}
+  pre{margin:0;padding:6px 10px;max-height:260px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--term-bg);color:var(--on-term);border:1px solid var(--term-line);border-radius:8px;font:12px/1.45 var(--mono)}
   .error pre{border-color:var(--danger)}
-  .more{margin-top:3px;padding:0;border:0;background:none;color:var(--accent);font:500 12px var(--sans);cursor:pointer}
-  :global(:root[data-theme="light"]) .more{color:#0b5d7a}
-  .more:hover{text-decoration:underline}
+  .more{margin-top:3px;padding:2px 0;border:0;background:none;color:var(--link);font:500 12px var(--sans);cursor:pointer;border-radius:4px}
+  .more:hover{text-decoration:underline;text-underline-offset:2px}
+  .more:active{opacity:.8}
 </style>

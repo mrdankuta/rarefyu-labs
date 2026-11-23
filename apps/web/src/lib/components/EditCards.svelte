@@ -61,17 +61,20 @@
   .cards{display:flex;flex-direction:column;gap:6px;margin-top:4px}
   .all{display:flex;align-items:center;gap:6px;font-size:12px}
   .sp{flex:1}.mut{color:var(--muted)}.sm{font-size:11.5px}
-  .card{border:1px solid var(--border);border-radius:9px;background:var(--surface2);padding:7px 10px;display:flex;flex-direction:column;gap:6px;min-width:0}
-  .card[data-state="kept"],.card[data-state="undone"],.card[data-state="superseded"]{opacity:.75}
+  .card{border:1px solid var(--border);border-radius:10px;background:var(--surface2);padding:7px 10px;display:flex;flex-direction:column;gap:6px;min-width:0}
+  .card[data-state="kept"] .name,.card[data-state="undone"] .name,.card[data-state="superseded"] .name{color:var(--muted)}
   .row{display:flex;align-items:center;gap:8px;min-width:0}
   .name{border:0;background:none;padding:0;font:12.5px var(--mono);color:var(--text);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;min-width:0;flex:0 1 auto}
   .name:hover:not(:disabled){text-decoration:underline}.name:disabled{cursor:default}
   .cnt{font:12px var(--mono);flex:none}
-  .pl{color:var(--ok)}.mi{color:var(--danger)}
+  .pl{color:var(--ok-text)}.mi{color:var(--danger)}
   .tag{margin-left:auto;flex:none;font-size:11px;color:var(--muted);border:1px solid var(--border);border-radius:99px;padding:0 8px}
+  .card[data-state="kept"] .tag{color:var(--ok-text);border-color:var(--ok-text)}
   .acts{display:flex;align-items:center;gap:6px}
-  button:not(.name){height:26px;padding:0 10px;border-radius:7px;border:1px solid var(--border);background:none;color:var(--text);font:500 12px var(--sans);cursor:pointer}
-  button:not(.name):hover:not(:disabled){border-color:var(--accent)}
+  button:not(.name){height:26px;padding:0 10px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--text);font:500 12px var(--sans);cursor:pointer;transition:border-color .12s,background .12s}
+  button:not(.name):hover:not(:disabled){border-color:var(--accent);background:var(--accent-soft)}
+  button:not(.name):active:not(:disabled){transform:translateY(1px)}
+  .name{border-radius:4px}
   button:disabled{opacity:.45;cursor:not-allowed}
   .dng{border-color:var(--danger)!important;color:var(--danger)!important}
   .sum{text-align:right}
