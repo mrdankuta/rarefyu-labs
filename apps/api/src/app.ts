@@ -437,6 +437,15 @@ app.get("/api/playgrounds/:id/files", async (c) => {
   }
 });
 
+app.get("/api/playgrounds/:id/tree", async (c) => {
+  if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
+  try {
+    return c.json(await driver.walkFiles(c.req.param("id")));
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
 app.get("/api/playgrounds/:id/files/content", async (c) => {
   if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
   const path = c.req.query("path");

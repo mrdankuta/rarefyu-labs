@@ -63,6 +63,8 @@ export interface ExecDriver {
   /** Stream a workspace tarball (snapshot download). */
   snapshotTar(sessionId: string): Promise<ReadableStream<Uint8Array>>;
   /** File tree under workspace (relative paths, traversal-guarded). */
+  /** Recursive listing (dotfiles hidden, heavy dirs not entered), for tree/search/change tracking. */
+  walkFiles(sessionId: string): Promise<{ entries: import("./walk").WalkEntry[]; truncated: boolean }>;
   listFiles(sessionId: string, sub?: string): Promise<{ path: string; type: "file" | "dir"; size?: number }[]>;
   readFile(sessionId: string, path: string): Promise<{ content: string; truncated: boolean }>;
   writeFile(sessionId: string, path: string, content: string): Promise<{ bytes: number }>;

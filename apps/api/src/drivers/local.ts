@@ -1,3 +1,4 @@
+import { walkArgs, parseWalk } from "./walk";
 import { frameFiles, parseTransferResult, type ImportInput, type TransferResult } from "../transfer";
 import { assertHomeRel, resolveInside } from "./paths";
 import type { DriverCapabilities, ExecDriver, TerminalHandle, WorkspaceAddress } from "./types";
@@ -253,6 +254,14 @@ export class LocalDriver implements ExecDriver {
 
   private async ensureStarter(sessionId: string) {
     await this.create(sessionId); // create() owns the starter snapshot
+  }
+
+  async walkFiles(sessionId: string) {
+    await this.create(sessionId);
+    const root = this.resolve(sessionId, "");
+    const proc = Bun.spawn(walkArgs("."), { cwd: root, stdout: "pipe", stderr: "pipe" });
+    const [text] = await Promise.all([new Response(proc.stdout as unknown as ReadableStream).text(), proc.exited]);
+    return parseWalk(text);
   }
 
   async listFiles(sessionId: string, sub = "") {

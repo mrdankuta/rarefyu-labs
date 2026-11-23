@@ -1,3 +1,4 @@
+import { walkArgs, parseWalk } from "./walk";
 import { frameFiles, parseTransferResult, type ImportInput, type TransferResult } from "../transfer";
 import { assertHomeRel, resolveInside } from "./paths";
 import type { DriverCapabilities, ExecDriver, Isolation, TerminalHandle, WorkspaceAddress } from "./types";
@@ -317,6 +318,13 @@ export class DockerDriver implements ExecDriver {
 
   // --- files ---
   private resolve(rel: string) { return resolveInside(WORKSPACE, rel); }
+
+  async walkFiles(sessionId: string) {
+    await this.ensureRunning(sessionId);
+    const r = await this.exec(sessionId, walkArgs(this.resolve("")));
+    if (r.exitCode !== 0 && !r.stdout) throw new Error(r.stderr.trim() || "cannot list workspace");
+    return parseWalk(r.stdout);
+  }
 
   async listFiles(sessionId: string, sub = "") {
     await this.ensureRunning(sessionId);

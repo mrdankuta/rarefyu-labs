@@ -75,6 +75,25 @@ export function driverContract(name: string, make: () => ExecDriver, opts?: { sk
         await expect(d.injectCredentials(id, [{ path: bad, content: "x" }])).rejects.toThrow();
     });
 
+    describe("walkFiles", () => {
+      t("lists nested files with sizes and mtimes, hides dotfiles, does not enter node_modules", async () => {
+        const id = sid("walk");
+        await d.create(id);
+        await d.writeFile(id, "a/b/c.txt", "hello");
+        await d.writeFile(id, ".hidden/x.txt", "no");
+        await d.writeFile(id, "node_modules/p/i.js", "no");
+        const { entries, truncated } = await d.walkFiles(id);
+        const by = new Map(entries.map((e) => [e.path, e]));
+        expect(truncated).toBe(false);
+        expect(by.get("a")?.type).toBe("dir");
+        expect(by.get("a/b/c.txt")).toMatchObject({ type: "file", size: 5 });
+        expect(by.get("a/b/c.txt")!.mtime).toBeGreaterThan(1_600_000_000);
+        expect(by.get("node_modules")?.collapsed).toBe(true);
+        expect([...by.keys()].some((k) => k.startsWith(".hidden") || k.startsWith("node_modules/"))).toBe(false);
+        await d.destroy(id);
+      });
+    });
+
     describe("file transfer", () => {
       const bytesOf = async (st: ReadableStream<Uint8Array>) => new Uint8Array(await new Response(st).arrayBuffer());
       const enc = (x: string) => new TextEncoder().encode(x);
