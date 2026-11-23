@@ -138,7 +138,7 @@ test.describe("edit cards", () => {
 
   test("a deleted file shows as Deleted and Undo brings it back", async ({ page }) => {
     await open(page, { "a.txt": A, "gone.txt": "bye\n" });
-    await say(page, "clean up " + call("bash", { command: "rm gone.txt", description: "remove" }));
+    await say(page, "clean up " + call("shell", { command: "rm gone.txt", description: "remove" }));
     await done(page);
     await expect(card(page, "gone.txt").getByTestId("card-status")).toHaveText("Deleted", { timeout: 15_000 });
     await expect(card(page, "gone.txt").getByTestId("card-del")).toHaveText("−1");
@@ -236,5 +236,24 @@ test.describe("edit cards", () => {
     await expect(card(page, "a.txt")).toHaveAttribute("data-state", "undone");
     expect(await read(page, "a.txt")).toBe(A);
     await expect(page.locator(".cm-content")).not.toContainText("mine"); // the editor shows the restored file
+  });
+
+  test("with #55: cards sit beside collapsed long output, and survive an agent restart + resync exactly once", async ({ page }) => {
+    await open(page, { "a.txt": A });
+    await say(page, "go " + call("shell", { command: "seq 1 120", description: "Count" }) + call("edit", { path: "a.txt", oldString: "two", newString: "TWO\nextra" }));
+    await done(page);
+    await expect(page.getByRole("button", { name: /show more/i }).first()).toBeVisible(); // the 120-line output is collapsed
+    await expect(card(page, "a.txt").getByTestId("card-add")).toHaveText("+2");
+    await expect(card(page, "a.txt").getByRole("button", { name: "Keep", exact: true })).toBeEnabled();
+    // crash the agent server: it restarts on its own and the transcript is rebuilt from history
+    expect((await page.request.post(`${base}/api/playgrounds/${wsId}/agent/_test/kill`)).ok()).toBe(true);
+    await expect(input(page)).toBeEnabled({ timeout: 60_000 });
+    await expect(page.locator("[data-testid=edit-card]")).toHaveCount(1);
+    await expect(card(page, "a.txt").getByTestId("card-add")).toHaveText("+2");
+    await expect(card(page, "a.txt").getByTestId("card-del")).toHaveText("−1");
+    // and the card still works after the restart
+    await card(page, "a.txt").getByRole("button", { name: "Undo", exact: true }).click();
+    await expect(card(page, "a.txt")).toHaveAttribute("data-state", "undone");
+    expect(await read(page, "a.txt")).toBe(A);
   });
 });
