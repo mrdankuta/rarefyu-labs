@@ -172,10 +172,10 @@ test.describe("edit cards", () => {
     await done(page);
     await openInEditor(page, "a.txt");
     await expect(page.locator(".cm-content")).toContainText("ONE");
-    await say(page, "second " + call("edit", { path: "a.txt", oldString: "three", newString: "THREE" }));
+    await say(page, "second " + call("edit", { path: "a.txt", oldString: "three", newString: "THREE!" }));
     // the FIRST turn's reply also says "Done with the edits": wait for the second one (a bare .last() check raced)
     await expect(page.locator(".msg.assistant", { hasText: "Done with the edits" })).toHaveCount(2, { timeout: 40_000 });
-    await expect(page.locator(".cm-content")).toContainText("THREE", { timeout: 15_000 }); // no reload, no click
+    await expect(page.locator(".cm-content")).toContainText("THREE!", { timeout: 15_000 }); // no reload, no click
     await expect(page.locator(".edname .d.dirty")).toHaveCount(0);
   });
 
