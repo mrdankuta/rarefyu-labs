@@ -70,6 +70,8 @@ export class DockerDriver implements ExecDriver {
   private memory: string;
   private pids: number;
   private bin: string;
+  /** Host path of a resolv.conf bind-mounted read-only into workspaces (see WORKSPACE_RESOLV_CONF in docs). */
+  private resolvConf: string | undefined;
   private attaches = new Map<string, Attach>(); // `${sessionId}/${termId}`
   private runtimeChecked: Promise<void> | null = null;
 
@@ -81,6 +83,7 @@ export class DockerDriver implements ExecDriver {
     this.memory = opts.memory ?? process.env.WORKSPACE_MEMORY ?? "2g";
     this.pids = opts.pids ?? Number(process.env.WORKSPACE_PIDS ?? 512);
     this.bin = opts.bin ?? "docker";
+    this.resolvConf = process.env.WORKSPACE_RESOLV_CONF || undefined;
   }
 
   capabilities(): DriverCapabilities {
@@ -177,6 +180,9 @@ export class DockerDriver implements ExecDriver {
       "--pids-limit", String(this.pids), "--memory", this.memory, "--cpus", this.cpus,
       "--read-only", "--tmpfs", "/tmp:exec,size=512m",
       "-v", `${this.vname(sessionId)}:${HOME}`,
+      // gVisor cannot reach Docker's embedded resolver (127.0.0.11) on a user-defined network, so names never
+      // resolve and the model/npm are unreachable. A fixed public-resolver file fixes that (IPs are used internally).
+      ...(this.resolvConf ? ["-v", `${this.resolvConf}:/etc/resolv.conf:ro`] : []),
       "-e", "TERM=xterm-256color", "-e", `PS1=\\u@playground:\\w$ `,
       this.image, "sleep", "infinity",
     ]);

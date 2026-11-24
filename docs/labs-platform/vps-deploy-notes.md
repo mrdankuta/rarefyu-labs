@@ -18,3 +18,7 @@ Gotcha fixed: the web runtime image ships only `apps/web`, so server-side import
 ## Lab layout flag (Classic / Chat)
 
 The lab page has a header toggle between Classic and Chat. Chat is the default on a student's first visit; the choice is then remembered in the browser (`localStorage` key `rfy_layout`). To fall back to Classic for everyone mid-class (the toggle is hidden and any stored Chat choice is ignored), set `PUBLIC_DEFAULT_LAYOUT=classic` in `/opt/rarefyu-labs/.env` and run `docker compose --env-file .env -f infra/compose.yaml up -d web`. It is read at runtime by the web container, so no rebuild is needed. Unset it, or set anything else, to restore the toggle. Only the value `classic` has an effect.
+
+## Workspace DNS under gVisor (required)
+
+Under `runsc`, Docker's embedded resolver (127.0.0.11) does not answer on the per-workspace network, so workspaces had IP egress but could not resolve any name: the agent hung on its first model call, and `npm`/`curl` would fail too. Found 2026-11-24 on the VPS. Fix: `infra/workspace-resolv.conf` (1.1.1.1, 9.9.9.9) is bind-mounted read-only over `/etc/resolv.conf` in each workspace. Set the HOST path in `.env`: `WORKSPACE_RESOLV_CONF=/opt/rarefyu-labs/infra/workspace-resolv.conf`, then `up -d api`. Workspaces created before this need recreating.
