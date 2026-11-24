@@ -1716,8 +1716,11 @@
   .layoutsw{display:inline-flex;align-items:center;gap:2px;height:32px;padding:2px;border:1px solid var(--border);border-radius:9px;background:var(--surface2);flex:none}
   .layoutsw .lbl{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:0 8px 0 8px}
   .layoutsw button{height:26px;padding:0 12px;border:0;border-radius:7px;background:none;color:var(--muted);font:600 13px var(--sans);cursor:pointer}
+  .layoutsw button{transition:background .12s,color .12s}
   .layoutsw button.on{background:var(--accent);color:var(--accent-ink)}
-  .layoutsw button:not(.on):hover{color:var(--text)}
+  .layoutsw button:not(.on):hover{color:var(--text);background:var(--accent-soft)}
+  .layoutsw button:active{transform:translateY(1px)}
+  .layoutsw button:focus-visible{outline-offset:1px}
   .chatp,.drawerbtns,.dclose{display:none}
   .dock.chat{position:relative;overflow:hidden;grid-template-columns:minmax(280px,30%) minmax(0,1fr)}
   .dock.chat.learn{grid-template-columns:minmax(220px,20%) minmax(260px,28%) minmax(0,1fr)}
@@ -1725,10 +1728,13 @@
   .dock.chat .hint-k{display:none}
   .dock.chat .drawerbtns{display:flex;margin-left:auto;padding-right:6px;gap:2px}
   .dock.chat .dclose{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);font-size:16px;cursor:pointer;flex:none}
+  .dock.chat .dclose:hover{color:var(--text);border-color:var(--accent);background:var(--accent-soft)}
+  .dock.chat .dclose:active{transform:translateY(1px)}
   .dock.chat .fh .dclose{order:9;margin-left:4px}
-  .dock.chat .rtabs .dclose{order:9;margin-left:auto;color:#93a0b4;border-color:#12303d}
+  .dock.chat .rtabs .dclose{order:9;margin-left:auto;color:var(--on-term);border-color:var(--term-line)}
+  .dock.chat .rtabs .dclose:hover{background:var(--term-btn);border-color:var(--brand-yellow);color:var(--on-term)}
   /* drawers stay laid out (so xterm can measure) but are hidden until opened */
-  .dock.chat .files,.dock.chat .right{position:absolute;top:12px;bottom:12px;right:12px;z-index:5;box-shadow:0 12px 40px rgba(0,0,0,.35);visibility:hidden;opacity:0;transform:translateX(24px);pointer-events:none;transition:opacity .15s,transform .15s,visibility 0s .15s}
+  .dock.chat .files,.dock.chat .right{position:absolute;top:12px;bottom:12px;right:12px;z-index:5;box-shadow:var(--shadow);visibility:hidden;opacity:0;transform:translateX(24px);pointer-events:none;transition:opacity .15s,transform .15s,visibility 0s .15s}
   .dock.chat .files{width:min(320px,calc(100% - 24px))}
   .dock.chat .right{width:min(640px,calc(100% - 24px))}
   .dock.chat.dfiles .files,.dock.chat.dterm .right{visibility:visible;opacity:1;transform:none;pointer-events:auto;transition:opacity .15s,transform .15s}
@@ -1738,7 +1744,7 @@
     .dock.chat .right{grid-column:auto}
   }
   @media (max-width:760px){
-    .dock.chat,.dock.chat.learn{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,.7fr) minmax(0,1.3fr)}
+    .dock.chat,.dock.chat.learn{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1fr)}
     .dock.chat .files,.dock.chat .right{display:flex;left:12px;width:auto}
   }
 </style>

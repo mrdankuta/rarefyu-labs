@@ -24,9 +24,10 @@
 
 <style>
   .pstat{margin:14px;border:1px dashed var(--border);border-radius:10px;flex:1;display:flex;flex-direction:column;gap:8px;align-items:center;justify-content:center;color:var(--muted);text-align:center;padding:16px;line-height:1.6}
-  .pstat b{color:var(--text)}
+  .pstat b{color:var(--text);font:600 14px var(--display)}
   .mut{max-width:44ch}
-  button{margin-top:4px;padding:6px 14px;border-radius:8px;border:1px solid var(--border);background:var(--accent-soft);color:var(--text);cursor:pointer}
+  button{margin-top:4px;height:32px;padding:0 16px;border-radius:9px;border:0;background:var(--accent);color:var(--accent-ink);font:600 13px var(--sans);cursor:pointer}
+  button:hover{filter:brightness(1.08)}button:active{transform:translateY(1px)}
   .spin{width:22px;height:22px;border-radius:50%;border:3px solid var(--border);border-top-color:var(--accent);animation:sp 0.9s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
   @media (prefers-reduced-motion: reduce){.spin{animation-duration:3s}}

@@ -7,7 +7,7 @@
   --bg: #07202b; --surface: #0d2b38; --surface2: #0a2430; --border: #1b4152;
   --text: #e8f0f3; --muted: #8fa9b4; --faint: #5f7f8c;
   --accent: #f7d602; --accent-ink: #0b3a4e; --accent-soft: rgba(247,214,2,.13);
-  --ok: #34d399; --ok-soft: rgba(52,211,153,.14);
+  --ok: #34d399; --ok-text: #34d399; --link: #f7d602; --on-term: #e8f0f3; --term-btn: rgba(255,255,255,.08); --ring: #f7d602; --ok-soft: rgba(52,211,153,.14);
   --warn: #fbbf24; --danger: #f87171; --danger-soft: rgba(248,113,113,.14);
   --add-bg: rgba(52,211,153,.12); --del-bg: rgba(248,113,113,.14);
   --term-bg: #051a22; --term-line: #12303d; --shadow: 0 24px 48px -24px rgba(0,0,0,.6);
@@ -20,7 +20,7 @@
   --bg: #f3f7f8; --surface: #ffffff; --surface2: #f8fbfc; --border: #d6e2e6;
   --text: #0b2430; --muted: #5a7480; --faint: #93a8b1;
   --accent: #0b3a4e; --accent-ink: #ffffff; --accent-soft: #e1eef2;
-  --ok: #12a06e; --ok-soft: #e7f7ef; --warn: #b45309; --danger: #b42318; --danger-soft: #fdecea;
+  --ok: #12a06e; --ok-text: #0b7a52; --link: #0b5d7a; --on-term: #e8f0f3; --term-btn: rgba(255,255,255,.08); --ring: #0b3a4e; --ok-soft: #e7f7ef; --warn: #b45309; --danger: #b42318; --danger-soft: #fdecea;
   --add-bg: #e7f7ef; --del-bg: #fdecea;
   --term-bg: #0b2a37; --term-line: #174557; --shadow: 0 30px 60px -24px rgba(11,58,78,.28);
   color-scheme: light;
@@ -33,3 +33,6 @@
 body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); }
 code, pre, input, .mono, .cm-editor { font-variant-ligatures: none; }
 .wcode, .wterm, .dbody, .sp1, .sp2, .path, .small, .row input, .xin, .termwrap { font-variant-ligatures: none !important; }
+/* keyboard focus: one ring everywhere (yellow on dark, navy on light); yellow again on the always-dark terminal surfaces */
+:where(a, button, input, textarea, select, summary, [tabindex]):focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+:where(.rtabs, .md pre, .wterm, .termwrap) :focus-visible { outline-color: var(--brand-yellow); }
