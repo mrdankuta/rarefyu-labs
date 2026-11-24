@@ -276,7 +276,7 @@ test.describe("absolute paths from the model", () => {
     await open(page);
     await say(page, "make it " + call("write", { path: "index.html", content: "<h1>hi</h1>\n" }));
     await done(page);
-    const abs = stub.requests.flatMap((r) => (r.body.messages ?? []).filter((m: any) => m.role === "assistant" && m.tool_calls)).flatMap((m: any) => m.tool_calls).map((c: any) => JSON.parse(c.function.arguments).path);
+    const abs = stub.requests.flatMap((r) => (r.body.messages ?? []).filter((m: any) => m.role === "assistant" && m.tool_calls)).flatMap((m: any) => m.tool_calls).map((c: any) => JSON.parse(c.function.arguments).path).filter((p: unknown): p is string => typeof p === "string");
     expect(abs.some((p: string) => p.startsWith("/") && p.endsWith("/index.html"))).toBe(true);
   });
 
