@@ -52,6 +52,9 @@ class Attach {
   write(data: string) {
     try { this.proc.terminal?.write(data); } catch { /* gone */ }
   }
+  resize(cols: number, rows: number) {
+    try { this.proc.terminal?.resize(cols, rows); } catch { /* gone */ }
+  }
   kill() {
     try { this.proc.kill(); } catch { /* gone */ }
   }
@@ -230,6 +233,7 @@ export class DockerDriver implements ExecDriver {
     return {
       termId,
       write: (d) => s.write(d),
+      resize: (c, r) => s.resize(c, r),
       onData: (cb) => {
         s.subs.add(cb);
         if (s.ring) cb(s.ring);

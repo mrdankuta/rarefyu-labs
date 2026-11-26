@@ -46,6 +46,14 @@ class Shell {
     }
   }
 
+  resize(cols: number, rows: number) {
+    try {
+      this.proc.terminal?.resize(cols, rows);
+    } catch {
+      /* shell gone */
+    }
+  }
+
   kill() {
     try {
       this.proc.kill();
@@ -152,6 +160,7 @@ export class LocalDriver implements ExecDriver {
     return {
       termId,
       write: (d) => s.write(d),
+      resize: (c, r) => s.resize(c, r),
       onData: (cb) => {
         s.subs.add(cb);
         // Replay scrollback so refresh/reconnect restores view.

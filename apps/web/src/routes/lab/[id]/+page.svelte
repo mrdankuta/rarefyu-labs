@@ -776,7 +776,10 @@
     fit.fit();
     const ws = new WebSocket(wsUrl(name));
     termState[name] = "connecting";
-    ws.onopen = () => { termState[name] = "connected"; };
+    // The server's pty starts at 80x24: tell it the real size on connect and whenever the pane is refitted.
+    const sendSize = () => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows })); };
+    ws.onopen = () => { termState[name] = "connected"; sendSize(); };
+    term.onResize(sendSize);
     // Lab-declared startup (cd workdir / run cmd) fires once, after the server confirms the shell is attached.
     const runStartup = () => {
       const tab = tabs.find((t) => t.id === name);

@@ -99,10 +99,16 @@ export function startServer(port: number) {
           else data.queue.push(message);
           return;
         }
-        const handle = (ws as { __h?: { write: (d: string) => void } }).__h;
+        const handle = (ws as { __h?: { write: (d: string) => void; resize?: (c: number, r: number) => void } }).__h;
         if (!handle) return;
         try {
           const parsed = JSON.parse(String(message));
+          if (parsed?.type === "resize") {
+            // Browser terminal size: clamp so a bad client cannot hand the pty a nonsense geometry.
+            const cols = Math.round(Number(parsed.cols)), rows = Math.round(Number(parsed.rows));
+            if (cols >= 20 && cols <= 500 && rows >= 5 && rows <= 200) handle.resize?.(cols, rows);
+            return;
+          }
           if (typeof parsed.data === "string") handle.write(parsed.data);
           else if (typeof parsed === "string") handle.write(parsed);
         } catch {

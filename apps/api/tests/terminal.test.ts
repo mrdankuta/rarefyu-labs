@@ -22,4 +22,19 @@ describe("terminal is a real pty (issue #21)", () => {
     expect(out).toContain("DONE_42");
     t.kill();
   });
+
+  test("resize changes the pty geometry the shell sees", async () => {
+    const d = new LocalDriver();
+    const id = `pty-${crypto.randomUUID()}`;
+    await d.create(id);
+    const t = await d.openTerminal(id, "t1");
+    t.write("stty size\n");
+    await sleep(400);
+    expect(t.scrollback()).toContain("24 80");
+    t.resize(132, 41);
+    t.write("stty size\n");
+    await sleep(400);
+    expect(t.scrollback()).toContain("41 132");
+    t.kill();
+  });
 });

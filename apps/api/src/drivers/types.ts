@@ -29,6 +29,8 @@ export interface TerminalHandle {
   termId: string;
   /** Write user input (keystrokes) to the shell. */
   write(data: string): void;
+  /** Match the pty to the browser's terminal size (full-screen tools like opencode draw to it). */
+  resize(cols: number, rows: number): void;
   /** Subscribe to output chunks. Returns unsubscribe. */
   onData(cb: (data: string) => void): () => void;
   /** Current scrollback (replay on reattach, 50KB ring). */
