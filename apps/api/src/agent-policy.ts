@@ -13,6 +13,7 @@
 export const AGENT_SERVER_CONFIG = {
   $schema: "https://opencode.ai/config.json",
   permission: { external_directory: "deny" },
+  update: "disable",
 } as const;
 
 /** Single-line JSON, safe inside single quotes in a shell script (no quotes in the policy). */

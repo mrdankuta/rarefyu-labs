@@ -168,8 +168,27 @@ export function resetSeatsCache() {
   loaded = null;
 }
 
+/** The class model: what a seat's OpenCode starts on unless SEAT_DEFAULT_MODEL says otherwise. */
+export const DEFAULT_SEAT_MODEL = "opencode-go/muse-spark-1.3-contributor";
+
+/**
+ * Seat OpenCode config (global file, read by the terminal TUI and the chat's agent server):
+ * - `update: "disable"`: no "/update to install vX" nag; students must not move off the pinned version.
+ * - `enabled_providers: ["opencode-go"]`: only the class provider is usable, even if a student connects another
+ *   integration from the TUI. (OpenCode 2.4.1 has no supported per-model allowlist: its provider `whitelist` is
+ *   ignored, so the picker still lists every model the plan allows; spend is capped per key by the plan.)
+ */
+export function seatConfig(model: string) {
+  return {
+    $schema: "https://opencode.ai/config.json",
+    model,
+    update: "disable",
+    enabled_providers: ["opencode-go"],
+  };
+}
+
 /** Files that make the agents work out of the box for this seat. */
-export function credentialFiles(seat: Seat, model = process.env.SEAT_DEFAULT_MODEL ?? "opencode-go/kimi-k3") {
+export function credentialFiles(seat: Seat, model = process.env.SEAT_DEFAULT_MODEL ?? DEFAULT_SEAT_MODEL) {
   return [
     {
       path: ".local/share/opencode/auth.json",
@@ -177,7 +196,7 @@ export function credentialFiles(seat: Seat, model = process.env.SEAT_DEFAULT_MOD
     },
     {
       path: ".config/opencode/opencode.json",
-      content: JSON.stringify({ $schema: "https://opencode.ai/config.json", model }),
+      content: JSON.stringify(seatConfig(model)),
     },
   ];
 }
@@ -204,6 +223,9 @@ const IMPORT_CMD =
   '[ -z "$OPENCODE_SERVICE_PORT" ] || "$bin" service set port "$OPENCODE_SERVICE_PORT" >/dev/null 2>&1 </dev/null; ' +
   'list() { "$bin" auth list >"$f" 2>/dev/null </dev/null; grep -q "OpenCode Go" "$f"; }; ' +
   'list || { "$bin" auth import >/dev/null 2>&1 && list; }; ok=$?; ' +
+  // Fill the model-catalog cache while the service is up (the student's first `opencode` otherwise pays for it),
+  // then stop the service: a warm one holds ~650 MB per workspace.
+  '"$bin" models >/dev/null 2>&1 </dev/null; ' +
   '"$bin" service stop >/dev/null 2>&1 </dev/null; rm -f "$f"; exit $ok';
 export async function installSeatKey(
   d: { run(id: string, cmd: string, o?: { timeoutMs?: number; stdin?: string }): Promise<{ exitCode: number; stderr: string }> },

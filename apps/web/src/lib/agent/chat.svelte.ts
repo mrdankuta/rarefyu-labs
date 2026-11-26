@@ -39,6 +39,16 @@ export class ChatController {
   /** Model the active session actually used (from its latest assistant message), e.g. "deepseek-v4.1-flash-free". Null until known. */
   model = $state<string | null>(null);
 
+  /** The latest turn failed because the provider rejected the key: the header chip must not say "ready". */
+  get keyRejected(): boolean {
+    for (let i = this.chat.messages.length - 1; i >= 0; i--) {
+      const m = this.chat.messages[i];
+      if (m.kind === "error") return m.error.kind === "auth";
+      if (m.kind === "assistant") return false;
+    }
+    return false;
+  }
+
   /** The lab page's change tracking + editor (set by the page). Edit cards, editor refresh and save-before-send use it. */
   host: EditHost | null = null;
   /** Per turn: files the lab saw change while the agent worked (covers shell edits and deletes). */

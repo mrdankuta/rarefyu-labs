@@ -27,7 +27,7 @@ non-root `student` user. `SEATS_REQUIRED=1` by default.
       -v lab-data:/data rarefyu/lab-local:dev
 
 Verified (local Convex + real container + headed browser): wrong code → 403, right code →
-workspace with `auth.json` 0600 and "Agent ready · kimi-k3", same code resumes.
+workspace with `auth.json` 0600 and "Agent ready · muse-spark-1.3-contributor", same code resumes.
 
 ## Known gaps
 - Image is 2.77 GB: slim it before asking 60 students to pull it.

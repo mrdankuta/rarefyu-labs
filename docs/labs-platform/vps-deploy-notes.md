@@ -22,3 +22,11 @@ The lab page has a header toggle between Classic and Chat. Chat is the default o
 ## Workspace DNS under gVisor (required)
 
 Under `runsc`, Docker's embedded resolver (127.0.0.11) does not answer on the per-workspace network, so workspaces had IP egress but could not resolve any name: the agent hung on its first model call, and `npm`/`curl` would fail too. Found 2026-11-24 on the VPS. Fix: `infra/workspace-resolv.conf` (1.1.1.1, 9.9.9.9) is bind-mounted read-only over `/etc/resolv.conf` in each workspace. Set the HOST path in `.env`: `WORKSPACE_RESOLV_CONF=/opt/rarefyu-labs/infra/workspace-resolv.conf`, then `up -d api`. Workspaces created before this need recreating.
+
+## Seat OpenCode config and terminal notes (2026-11-26)
+
+- Default class model is `opencode-go/muse-spark-1.3-contributor` (`SEAT_DEFAULT_MODEL` overrides; set it in `.env` only if you want something else). Verify the plan's model list shows it: OpenCode only lists models the key's plan allows.
+- Each seat's global OpenCode config sets `update: "disable"` (no "/update to install" nag; we pin the version) and `enabled_providers: ["opencode-go"]` (other providers are unusable even if a student connects one). OpenCode 2.4.1 has no supported per-model allowlist, so the model picker still shows every model the plan allows.
+- The terminal pty follows the browser pane size (client sends `{"type":"resize","cols","rows"}` over the terminal websocket). Terminals used to be fixed at 80x24.
+- Ctrl+P inside a terminal goes to the program (opencode's command palette); the lab's quick-open still works with focus elsewhere.
+- A running OpenCode background service holds about 650 MB; the lab stops it after the key install and only warms the on-disk model catalog, so cold starts cost a few seconds, not 650 MB per workspace.

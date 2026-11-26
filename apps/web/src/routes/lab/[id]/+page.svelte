@@ -429,6 +429,8 @@
     return tree.filter((e) => e.type === "file").map((e) => ({ p: e.path, s: fuzzy(qo!.q, e.path) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s).slice(0, 12).map((x) => x.p);
   });
   function onGlobalKey(e: KeyboardEvent) {
+    // Keys typed into a terminal belong to the program in it (opencode uses Ctrl+P for its command palette).
+    if ((e.target as Element | null)?.closest?.(".xterm, [aria-label='Terminal input']")) return;
     const mod = e.ctrlKey || e.metaKey;
     if (mod && !e.shiftKey && e.key.toLowerCase() === "p") { e.preventDefault(); qo = { q: "", sel: 0 }; return; }
     if (mod && e.shiftKey && e.key.toLowerCase() === "f") { e.preventDefault(); sideView = "search"; setTimeout(() => document.getElementById("proj-search")?.focus(), 0); return; }
@@ -1197,7 +1199,7 @@
     </div>
     <div class="r">
       {#if !layoutForced}<span class="layoutsw" role="group" aria-label="Layout"><span class="lbl">Layout</span><button class:on={shell === "classic"} aria-pressed={shell === "classic"} title="Classic: explorer, editor and terminal" onclick={() => setShell("classic")}>Classic</button><button class:on={shell === "chat"} aria-pressed={shell === "chat"} title="Chat: agent chat beside a large live preview" onclick={() => setShell("chat")}>Chat</button></span>{/if}
-      {#if agent}<span class="agentchip" class:off={!agent.ready} title={agent.ready ? "Your coding agent has its model key. Run opencode in the terminal." : (agent.reason ?? "No model key installed. Ask your instructor for a class code.")}><i></i>{agent.ready ? `Agent ready${(chatCtl?.model ?? agent.model) ? ` · ${(chatCtl?.model ?? agent.model)!.split("/").pop()}` : ""}` : "No agent key"}</span>{/if}
+      {#if agent}<span class="agentchip" class:off={!agent.ready || chatCtl?.keyRejected} title={chatCtl?.keyRejected ? "The model provider rejected your class key. Ask your instructor to check it." : agent.ready ? "Your coding agent has its model key. Run opencode in the terminal." : (agent.reason ?? "No model key installed. Ask your instructor for a class code.")}><i></i>{chatCtl?.keyRejected ? "Key rejected" : agent.ready ? `Agent ready${(chatCtl?.model ?? agent.model) ? ` · ${(chatCtl?.model ?? agent.model)!.split("/").pop()}` : ""}` : "No agent key"}</span>{/if}
       <span class="timer" class:urgent={ttlUrgent} title={ttlUrgent ? "less than 15 minutes left, download your work" : "time remaining"}>{ttlText}</span>
       <span class="fontbtns" role="group" aria-label="text size"><button class="ibtn" aria-label="smaller text" onclick={() => bumpFont(-1)}>A−</button><button class="ibtn" aria-label="larger text" onclick={() => bumpFont(1)}>A+</button></span>
       <button class="ibtn" aria-label="switch to {theme === 'dark' ? 'light' : 'dark'} mode" title="switch theme" onclick={() => (theme = toggleTheme())}>{theme === "dark" ? "☀" : "☾"}</button>
@@ -1741,12 +1743,15 @@
   .dock.chat .files{width:min(320px,calc(100% - 24px))}
   .dock.chat .right{width:min(640px,calc(100% - 24px))}
   .dock.chat.dfiles .files,.dock.chat.dterm .right{visibility:visible;opacity:1;transform:none;pointer-events:auto;transition:opacity .15s,transform .15s}
+  /* an open terminal makes room: the preview shrinks (never below 420px) instead of hiding under the drawer */
+  .dock.chat.dterm .center{margin-right:clamp(0px,calc(100% - 420px),652px)}
   @media (max-width:1200px){
     .layoutsw .lbl{display:none}
     .dock.chat,.dock.chat.learn{grid-template-columns:minmax(240px,34%) minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
     .dock.chat .right{grid-column:auto}
   }
   @media (max-width:760px){
+    .dock.chat.dterm .center{margin-right:0}
     .dock.chat,.dock.chat.learn{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1fr)}
     .dock.chat .files,.dock.chat .right{display:flex;left:12px;width:auto}
   }

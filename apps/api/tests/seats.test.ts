@@ -47,7 +47,9 @@ describe("seat store", () => {
     const [seat] = await addSeats([{ label: "a", key: KEY }]);
     const files = credentialFiles(seat);
     expect(JSON.parse(files[0].content)["opencode-go"]).toEqual({ type: "api", key: KEY });
-    expect(JSON.parse(files[1].content).model).toBe("opencode-go/kimi-k3");
+    expect(JSON.parse(files[1].content).model).toBe("opencode-go/muse-spark-1.3-contributor");
+    // students must not be nagged to update off the pinned version, and only the class provider is usable
+    expect(JSON.parse(files[1].content)).toMatchObject({ update: "disable", enabled_providers: ["opencode-go"] });
   });
 });
 
@@ -95,7 +97,7 @@ describe("landing config and agent status", () => {
     const seatPg = await (await post("/api/playgrounds", { seatCode: made.seats[0].code })).json();
     const ready = await app.request(`/api/playgrounds/${seatPg.id}/agent-status`);
     const text = await ready.text();
-    expect(JSON.parse(text)).toEqual({ ready: true, model: "opencode-go/kimi-k3" });
+    expect(JSON.parse(text)).toEqual({ ready: true, model: "opencode-go/muse-spark-1.3-contributor" });
     expect(text).not.toContain(KEY);
     // The local stand-in driver shares the host HOME unless creds were injected; use an empty one here.
     const realHome = process.env.HOME;

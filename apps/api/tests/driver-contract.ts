@@ -509,7 +509,7 @@ export function agentServerContract(name: string, make: () => ExecDriver, opts: 
       const id = await workspace("seatkey");
       await d.injectCredentials(id, [
         { path: ".local/share/opencode/auth.json", content: JSON.stringify({ "opencode-go": { type: "api", key: "sk-contract-seat" } }) },
-        { path: ".config/opencode/opencode.json", content: JSON.stringify({ model: "opencode-go/kimi-k3" }) },
+        { path: ".config/opencode/opencode.json", content: JSON.stringify({ model: "opencode-go/muse-spark-1.3-contributor" }) },
       ]);
       await servers.start(id);
       if (opts.real) {
@@ -525,7 +525,7 @@ export function agentServerContract(name: string, make: () => ExecDriver, opts: 
         const log = await (await call(id, "/api/_stub/connected", { headers: owner })).json();
         expect(log).toEqual(["opencode-go"]);
       }
-      const term = await d.run(id, 'grep -c kimi-k3 "$HOME/.config/opencode/opencode.json"');
+      const term = await d.run(id, 'grep -c muse-spark "$HOME/.config/opencode/opencode.json"');
       expect(term.stdout.trim()).toBe("1");
     }, 120_000);
 

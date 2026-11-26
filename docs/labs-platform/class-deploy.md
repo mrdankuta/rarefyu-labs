@@ -121,7 +121,7 @@ snapshot (top-right) before you leave if you want to keep your work: the server 
 
 - No login: a class code is the only credential. A student who shares their code shares their workspace and key.
 - In-memory sessions: see "Do not restart the API".
-- `opencode` default model is `opencode-go/kimi-k3`; change with `SEAT_DEFAULT_MODEL` if the plan's allowed models differ.
+- `opencode` default model is `opencode-go/muse-spark-1.3-contributor`; change with `SEAT_DEFAULT_MODEL` if the plan's allowed models differ.
 - Claude Code is installed but unconfigured; it needs the student's own Anthropic login/key.
 - Student egress is open to the internet (they need npm/pip/the model API). Abuse control is the per-workspace
   CPU/memory/pid limits and the kill switch, not a network allowlist.
