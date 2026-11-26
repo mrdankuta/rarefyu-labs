@@ -30,3 +30,7 @@ Under `runsc`, Docker's embedded resolver (127.0.0.11) does not answer on the pe
 - The terminal pty follows the browser pane size (client sends `{"type":"resize","cols","rows"}` over the terminal websocket). Terminals used to be fixed at 80x24.
 - Ctrl+P inside a terminal goes to the program (opencode's command palette); the lab's quick-open still works with focus elsewhere.
 - A running OpenCode background service holds about 650 MB; the lab stops it after the key install and only warms the on-disk model catalog, so cold starts cost a few seconds, not 650 MB per workspace.
+
+## Resizable and collapsible panels (both layouts)
+
+Panels have draggable dividers in the 12px gaps (Classic: Learn | Explorer | editor | terminal; Chat: Learn | chat | preview, plus the left edge of the terminal and files drawers). Each divider is keyboard-operable (arrows ±16px, Shift ±64, Home/End, Enter collapses, double-click resets), and the Learn, Explorer, terminal and chat panels collapse to a 32px rail with a chevron. Sizes live in the browser (`localStorage` key `rfy_panes_v1`); a "Reset panels" button appears in the header while anything is customised. No server state or config. Dividers are hidden when the layout stacks (Classic below 1200px, Chat below 760px). The terminal follows its panel: dragging it wider gives the shell more columns.

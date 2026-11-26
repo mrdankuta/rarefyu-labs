@@ -11,6 +11,8 @@
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import type { EditHost } from "$lib/agent/edits";
   import PreviewStatus from "$lib/components/PreviewStatus.svelte";
+  import Gutter from "$lib/components/Gutter.svelte";
+  import { isCustom, paneVars, readPanes, resetPane, setWidth, storePanes, toggleCollapsed, emptyPanes, type PaneKey, type PaneState } from "$lib/panes";
   import { PreviewController, type PreviewUi } from "$lib/preview";
   import { EditorState, Compartment } from "@codemirror/state";
   import { EditorView, keymap } from "@codemirror/view";
@@ -40,6 +42,25 @@
   const layoutForced = forcedClassic(env.PUBLIC_DEFAULT_LAYOUT);
   let shell = $state<ShellLayout>(resolveLayout(readStoredLayout(), env.PUBLIC_DEFAULT_LAYOUT));
   let drawer = $state<"files" | "terminal" | null>(null);
+  // Panel sizes / collapsed rails (both layouts), remembered per browser. Dragging only changes CSS variables on
+  // the dock; every panel stays mounted, so terminals, editor state and the preview keep running.
+  let panes = $state<PaneState>(readPanes());
+  let dockEl = $state<HTMLElement | null>(null);
+  let stepsEl = $state<HTMLElement | null>(null);
+  let chatEl = $state<HTMLElement | null>(null);
+  let filesEl = $state<HTMLElement | null>(null);
+  let centerEl = $state<HTMLElement | null>(null);
+  let rightEl = $state<HTMLElement | null>(null);
+  let vw = $state(1400);
+  let paneTick = $state(0);
+  const refitSoon = () => requestAnimationFrame(() => requestAnimationFrame(refitTerms));
+  function resizePane(k: PaneKey, px: number) { panes = setWidth(panes, k, px); refitSoon(); }
+  function commitPanes() { storePanes(panes); paneTick++; refitSoon(); }
+  function collapsePane(k: PaneKey) { panes = toggleCollapsed(panes, k); commitPanes(); }
+  function resetOne(k: PaneKey) { panes = resetPane(panes, k); commitPanes(); }
+  function resetAllPanes() { panes = emptyPanes(); commitPanes(); }
+  // Dividers need room: Classic stacks below 1200px and Chat below 760px (see the media queries).
+  const gutters = $derived(shell === "classic" ? vw > 1200 : vw > 760);
   // Agent chat: created and started the first time the Chat layout is shown (never in a Classic-only session),
   // then kept for the life of the page so switching layouts neither drops the conversation nor reconnects.
   let chatCtl = $state<ChatController | null>(null);
@@ -759,7 +780,15 @@
     if (old) { try { old.ws.close(); } catch {} delete termObjs[name]; }
     setTimeout(() => attachTerm(name, true), 0);
   }
+  // The load-time attach and the drawer's attach can overlap while xterm is still being imported: without this
+  // guard both pass the "not attached yet" check and two terminals (two websockets) end up stacked in one pane.
+  const attaching = new Set<string>();
   async function attachTerm(name: string, force = false) {
+    if (attaching.has(name)) return;
+    attaching.add(name);
+    try { await attachTermNow(name, force); } finally { attaching.delete(name); }
+  }
+  async function attachTermNow(name: string, force = false) {
     const el = termEls[name];
     if (!el || (termObjs[name] && !force)) return;
     if (termObjs[name] && force) delete termObjs[name];
@@ -1191,6 +1220,8 @@
   });
 </script>
 
+<svelte:window bind:innerWidth={vw} />
+
 <div class="win" style:--edfs="{fontSize + 1}px">
   <header class="hdr">
     <div class="l">
@@ -1199,6 +1230,7 @@
     </div>
     <div class="r">
       {#if !layoutForced}<span class="layoutsw" role="group" aria-label="Layout"><span class="lbl">Layout</span><button class:on={shell === "classic"} aria-pressed={shell === "classic"} title="Classic: explorer, editor and terminal" onclick={() => setShell("classic")}>Classic</button><button class:on={shell === "chat"} aria-pressed={shell === "chat"} title="Chat: agent chat beside a large live preview" onclick={() => setShell("chat")}>Chat</button></span>{/if}
+      {#if isCustom(panes)}<button class="resetpanes" title="Reset panel sizes to the defaults" aria-label="Reset panel sizes" onclick={resetAllPanes}>↺ <span class="lbl">Reset panels</span></button>{/if}
       {#if agent}<span class="agentchip" class:off={!agent.ready || chatCtl?.keyRejected} title={chatCtl?.keyRejected ? "The model provider rejected your class key. Ask your instructor to check it." : agent.ready ? "Your coding agent has its model key. Run opencode in the terminal." : (agent.reason ?? "No model key installed. Ask your instructor for a class code.")}><i></i>{chatCtl?.keyRejected ? "Key rejected" : agent.ready ? `Agent ready${(chatCtl?.model ?? agent.model) ? ` · ${(chatCtl?.model ?? agent.model)!.split("/").pop()}` : ""}` : "No agent key"}</span>{/if}
       <span class="timer" class:urgent={ttlUrgent} title={ttlUrgent ? "less than 15 minutes left, download your work" : "time remaining"}>{ttlText}</span>
       <span class="fontbtns" role="group" aria-label="text size"><button class="ibtn" aria-label="smaller text" onclick={() => bumpFont(-1)}>A−</button><button class="ibtn" aria-label="larger text" onclick={() => bumpFont(1)}>A+</button></span>
@@ -1216,9 +1248,9 @@
   <input type="file" multiple hidden bind:this={filePick} onchange={onPicked} aria-label="upload files" />
   <input type="file" hidden webkitdirectory bind:this={dirPick} onchange={onPicked} aria-label="upload folder" />
 
-  <div class="dock" class:learn={hasLesson && !hideLearn} class:chat={shell === "chat"} class:dfiles={drawer === "files"} class:dterm={drawer === "terminal"}>
+  <div class="dock" bind:this={dockEl} style={paneVars(panes)} class:learn={hasLesson && !hideLearn} class:chat={shell === "chat"} class:dfiles={drawer === "files"} class:dterm={drawer === "terminal"}>
     {#if hasLesson && !hideLearn}
-    <section class="steps card">
+    <section class="steps card" bind:this={stepsEl} class:railed={panes.collapsed.steps} data-rail="Learn">
       <div class="colbar">Learn <button onclick={() => (hideLearn = true)}>⟨ hide</button></div>
       <div class="body">
         {#if loading}
@@ -1253,11 +1285,11 @@
     </section>
     {/if}
 
-    <section class="chatp card" aria-label="agent chat">
+    <section class="chatp card" bind:this={chatEl} class:railed={panes.collapsed.chat && shell === "chat"} data-rail="Agent chat" aria-label="agent chat">
       {#if chatCtl}<ChatPanel ctl={chatCtl} />{/if}
     </section>
 
-    <aside class="files card" class:dragover={dragOver} aria-label="explorer"
+    <aside class="files card" bind:this={filesEl} class:railed={panes.collapsed.files && shell === "classic"} data-rail="Files" class:dragover={dragOver} aria-label="explorer"
       ondragover={(e) => { e.preventDefault(); dragOver = true; }} ondragleave={(e) => { if (e.currentTarget === e.target) dragOver = false; }} ondrop={onDrop}>
       <div class="fh">
         <button class="dclose" aria-label="close files" onclick={() => (drawer = null)}>×</button>
@@ -1317,7 +1349,7 @@
       {/if}
     </aside>
 
-    <section class="center card">
+    <section class="center card" bind:this={centerEl}>
       <div class="vtabs" role="tablist">
         <button role="tab" class="vt" class:on={centerView === "code"} onclick={() => (centerView = "code")}>Code</button>
         <button role="tab" class="vt" class:on={centerView === "preview"} onclick={() => { centerView = "preview"; if (previewTab) checkBrowser(previewTab.id, true); }}>Preview</button>
@@ -1418,7 +1450,7 @@
       </div>
     </section>
 
-    <section class="right card">
+    <section class="right card" bind:this={rightEl} class:railed={panes.collapsed.right && shell === "classic"} data-rail="Terminal">
       <div class="rtabs">
         <button class="dclose" aria-label="close terminal" onclick={() => (drawer = null)}>×</button>
         {#each runTabs as t (t.id)}
@@ -1469,6 +1501,29 @@
       </div>
       {/if}
     </section>
+
+    {#if gutters}
+      {#if hasLesson && !hideLearn}
+        <Gutter pane="steps" edge="right" label="Learn panel" dock={dockEl} target={stepsEl} center={centerEl} collapsible collapsed={!!panes.collapsed.steps} tick={paneTick}
+          onresize={(px) => resizePane("steps", px)} oncommit={commitPanes} oncollapse={() => collapsePane("steps")} onreset={() => resetOne("steps")} />
+      {/if}
+      {#if shell === "classic"}
+        <Gutter pane="files" edge="right" label="Explorer" dock={dockEl} target={filesEl} center={centerEl} collapsible collapsed={!!panes.collapsed.files} tick={paneTick}
+          onresize={(px) => resizePane("files", px)} oncommit={commitPanes} oncollapse={() => collapsePane("files")} onreset={() => resetOne("files")} />
+        <Gutter pane="right" edge="left" label="Terminal panel" dock={dockEl} target={rightEl} center={centerEl} collapsible collapsed={!!panes.collapsed.right} tick={paneTick}
+          onresize={(px) => resizePane("right", px)} oncommit={commitPanes} oncollapse={() => collapsePane("right")} onreset={() => resetOne("right")} />
+      {:else}
+        <Gutter pane="chat" edge="right" label="Chat panel" dock={dockEl} target={chatEl} center={centerEl} collapsible collapsed={!!panes.collapsed.chat} tick={paneTick}
+          onresize={(px) => resizePane("chat", px)} oncommit={commitPanes} oncollapse={() => collapsePane("chat")} onreset={() => resetOne("chat")} />
+        {#if drawer === "terminal"}
+          <Gutter pane="term" edge="left" label="Terminal drawer" dock={dockEl} target={rightEl} center={centerEl} tick={paneTick}
+            onresize={(px) => resizePane("term", px)} oncommit={commitPanes} onreset={() => resetOne("term")} />
+        {:else if drawer === "files"}
+          <Gutter pane="fdrawer" edge="left" label="Files drawer" dock={dockEl} target={filesEl} center={centerEl} tick={paneTick}
+            onresize={(px) => resizePane("fdrawer", px)} oncommit={commitPanes} onreset={() => resetOne("fdrawer")} />
+        {/if}
+      {/if}
+    {/if}
   </div>
 </div>
 
@@ -1555,8 +1610,8 @@
   .mini.ghost{background:transparent;color:var(--muted);border:1px solid var(--border)}
   .errtxt{color:var(--danger)}
 
-  .dock{flex:1;min-height:0;display:grid;grid-template-columns:236px minmax(0,1fr) minmax(360px,44%);gap:12px;padding:12px}
-  .dock.learn{grid-template-columns:minmax(240px,24%) 220px minmax(0,1fr) minmax(340px,38%)}
+  .dock{flex:1;min-height:0;display:grid;grid-template-columns:var(--w-files,236px) minmax(0,1fr) var(--w-right,minmax(360px,44%));gap:12px;padding:12px;position:relative}
+  .dock.learn{grid-template-columns:var(--w-steps,minmax(240px,24%)) var(--w-files,220px) minmax(0,1fr) var(--w-right,minmax(340px,38%))}
   .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;min-height:0;min-width:0;overflow:hidden;display:flex;flex-direction:column}
 
   .steps{background:var(--surface)}
@@ -1727,8 +1782,8 @@
   .layoutsw button:active{transform:translateY(1px)}
   .layoutsw button:focus-visible{outline-offset:1px}
   .chatp,.drawerbtns,.dclose{display:none}
-  .dock.chat{position:relative;overflow:hidden;grid-template-columns:minmax(280px,30%) minmax(0,1fr)}
-  .dock.chat.learn{grid-template-columns:minmax(220px,20%) minmax(260px,28%) minmax(0,1fr)}
+  .dock.chat{position:relative;overflow:hidden;grid-template-columns:var(--w-chat,minmax(280px,30%)) minmax(0,1fr)}
+  .dock.chat.learn{grid-template-columns:var(--w-steps,minmax(220px,20%)) var(--w-chat,minmax(260px,28%)) minmax(0,1fr)}
   .dock.chat .chatp{display:flex;flex-direction:column;min-height:0;overflow:hidden}
   .dock.chat .hint-k{display:none}
   .dock.chat .drawerbtns{display:flex;margin-left:auto;padding-right:6px;gap:2px}
@@ -1740,14 +1795,14 @@
   .dock.chat .rtabs .dclose:hover{background:var(--term-btn);border-color:var(--brand-yellow);color:var(--on-term)}
   /* drawers stay laid out (so xterm can measure) but are hidden until opened */
   .dock.chat .files,.dock.chat .right{position:absolute;top:12px;bottom:12px;right:12px;z-index:5;box-shadow:var(--shadow);visibility:hidden;opacity:0;transform:translateX(24px);pointer-events:none;transition:opacity .15s,transform .15s,visibility 0s .15s}
-  .dock.chat .files{width:min(320px,calc(100% - 24px))}
-  .dock.chat .right{width:min(640px,calc(100% - 24px))}
+  .dock.chat .files{width:min(var(--w-fdrawer,320px),calc(100% - 24px))}
+  .dock.chat .right{width:min(var(--w-term,640px),calc(100% - 24px))}
   .dock.chat.dfiles .files,.dock.chat.dterm .right{visibility:visible;opacity:1;transform:none;pointer-events:auto;transition:opacity .15s,transform .15s}
   /* an open terminal makes room: the preview shrinks (never below 420px) instead of hiding under the drawer */
-  .dock.chat.dterm .center{margin-right:clamp(0px,calc(100% - 420px),652px)}
+  .dock.chat.dterm .center{margin-right:clamp(0px,calc(100% - 420px),calc(var(--w-term,640px) + 12px))}
   @media (max-width:1200px){
     .layoutsw .lbl{display:none}
-    .dock.chat,.dock.chat.learn{grid-template-columns:minmax(240px,34%) minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
+    .dock.chat,.dock.chat.learn{grid-template-columns:var(--w-chat,minmax(240px,34%)) minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
     .dock.chat .right{grid-column:auto}
   }
   @media (max-width:760px){
@@ -1755,4 +1810,14 @@
     .dock.chat,.dock.chat.learn{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1fr)}
     .dock.chat .files,.dock.chat .right{display:flex;left:12px;width:auto}
   }
+  /* resizable / collapsible panels: a collapsed panel keeps a slim rail with its label; the Gutter beside it expands it */
+  .dock .railed{position:relative}
+  .dock .railed > :global(*){display:none}
+  .dock .railed::after{content:attr(data-rail);position:absolute;inset:0;display:flex;align-items:center;justify-content:center;writing-mode:vertical-rl;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  :global(html.rfy-dragging){cursor:col-resize;user-select:none}
+  :global(html.rfy-dragging iframe){pointer-events:none}
+  .resetpanes{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface2);color:var(--muted);font:600 13px var(--sans);cursor:pointer}
+  .resetpanes:hover{color:var(--text);border-color:var(--accent)}
+  .resetpanes:focus-visible{outline-offset:1px}
+  @media (max-width:1200px){.resetpanes .lbl{display:none}}
 </style>
