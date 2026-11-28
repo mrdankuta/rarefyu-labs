@@ -1,7 +1,7 @@
-import { describe, expect, test, beforeEach } from "bun:test";
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { app } from "../src/app";
 import { clearPlaygrounds } from "../src/playgrounds";
-import { clearGrading, gradeSubmission } from "../src/grading";
+import { clearGrading, gradeSubmission, submitForGrading } from "../src/grading";
 
 const S = (k: string) => ({ "content-type": "application/json", "x-session-key": k });
 
@@ -14,9 +14,15 @@ async function makePlayground(key: string): Promise<string> {
   return (await res.json()).id as string;
 }
 
+const prevGrading = process.env.GRADING_ENABLED;
 beforeEach(() => {
   clearPlaygrounds();
   clearGrading();
+  process.env.GRADING_ENABLED = "1"; // the dev/test grader only runs when explicitly enabled
+});
+afterEach(() => {
+  if (prevGrading === undefined) delete process.env.GRADING_ENABLED;
+  else process.env.GRADING_ENABLED = prevGrading;
 });
 
 describe("isolated grading", () => {
@@ -88,5 +94,56 @@ describe("isolated grading", () => {
     const body = await got.json();
     expect(body.grade.log).toContain("grade demo-agent/01-scaffold");
     expect(body.submission.commitHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("grading disabled (default)", () => {
+  const SENTINEL = "/tmp/labs-grading-disabled-sentinel";
+
+  async function grade(id: string, key: string) {
+    return app.request(`/api/playgrounds/${id}/grade`, {
+      method: "POST",
+      headers: S(key),
+      body: JSON.stringify({ track: "demo-agent", step: "01-scaffold" }),
+    });
+  }
+
+  test.each([undefined, "", "0", "false"])("GRADING_ENABLED=%p returns the disabled response", async (v) => {
+    const id = await makePlayground("d1");
+    if (v === undefined) delete process.env.GRADING_ENABLED;
+    else process.env.GRADING_ENABLED = v;
+    const res = await grade(id, "d1");
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "grading is unavailable", code: "grading_disabled" });
+  });
+
+  test("a planted check script / fail.sh is never executed", async () => {
+    const id = await makePlayground("d2");
+    await Bun.$`rm -f ${SENTINEL}`.quiet();
+    const plant = (path: string, content: string) =>
+      app.request(`/api/playgrounds/${id}/files/content`, {
+        method: "PUT",
+        headers: S("d2"),
+        body: JSON.stringify({ path, content }),
+      });
+    await plant("fail.sh", `touch ${SENTINEL}\n`);
+    await plant("check", `#!/bin/sh\ntouch ${SENTINEL}\n`);
+    await plant("src/app.ts", "healthz\n");
+    delete process.env.GRADING_ENABLED;
+    const res = await grade(id, "d2");
+    expect(res.status).toBe(503);
+    expect(await Bun.file(SENTINEL).exists()).toBe(false);
+  });
+
+  test("direct grading calls refuse to run and create no work directory", async () => {
+    delete process.env.GRADING_ENABLED;
+    await expect(submitForGrading("nope", "demo-agent", "01-scaffold")).rejects.toThrow(/disabled/);
+    await expect(gradeSubmission("nope")).rejects.toThrow(/disabled/);
+  });
+
+  test("disabled response comes before any session lookup", async () => {
+    delete process.env.GRADING_ENABLED;
+    const res = await grade("no-such-id", "d3");
+    expect(res.status).toBe(503);
   });
 });

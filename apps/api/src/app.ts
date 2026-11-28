@@ -51,7 +51,7 @@ import {
   takeNotices,
 } from "./teach";
 import { decideCall, getAudit as getAgentAudit, getPending, redact, submitRun } from "./agent";
-import { getGrade, getSubmission, gradeSubmission, submitForGrading } from "./grading";
+import { GRADING_DISABLED_CODE, getGrade, gradingEnabled, getSubmission, gradeSubmission, submitForGrading } from "./grading";
 import { noteHeartbeat, noteKill, noteProvisionErr, noteProvisionOk, noteProvisionStart, renderMetrics } from "./metrics";
 
 /** Slice-1 stub store. Slice 2 replaces with Postgres + quota checks. */
@@ -800,6 +800,9 @@ app.route("/", agentRoutes({ servers: agentServers, access: agentAccess, keyed: 
 
 // --- Isolated grading (issue #10): submit → grade in fresh env, immutable ---
 app.post("/api/playgrounds/:id/grade", async (c) => {
+  // Checked first: when disabled nothing is read, written or executed.
+  if (!gradingEnabled())
+    return c.json({ error: "grading is unavailable", code: GRADING_DISABLED_CODE }, 503);
   if (!getPlayground(c.req.param("id"))) return c.json({ error: "playground not found" }, 404);
   const body = await c.req.json().catch(() => ({}));
   if (!body.track || !body.step) return c.json({ error: "need {track, step}" }, 400);

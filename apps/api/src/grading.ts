@@ -32,6 +32,22 @@ export interface Grade {
   gradedAt: string;
 }
 
+/**
+ * Grading runs the track's check script as a process on the API host, in a
+ * directory seeded from the student's files. That is not safe on a shared
+ * host, so it is OFF unless GRADING_ENABLED is explicitly "1"/"true" (local
+ * dev and tests only). Read per call so tests and operators can flip it.
+ */
+export function gradingEnabled(): boolean {
+  return ["1", "true"].includes((process.env.GRADING_ENABLED ?? "").trim().toLowerCase());
+}
+
+export const GRADING_DISABLED_CODE = "grading_disabled";
+
+function assertGradingEnabled() {
+  if (!gradingEnabled()) throw new Error("grading is disabled on this host");
+}
+
 const submissions = new Map<string, Submission>();
 const grades = new Map<string, Grade>(); // submissionId → grade (write-once)
 
@@ -75,6 +91,7 @@ export async function submitForGrading(
   track: string,
   step: string,
 ): Promise<Submission> {
+  assertGradingEnabled();
   const rec = getPlayground(sessionId);
   if (!rec) throw new Error("session not found");
   const files = await snapshotWorkspace(sessionId);
@@ -96,6 +113,7 @@ export async function submitForGrading(
 
 /** Grade a submission in a fresh dir with a clean env. Deterministic. */
 export async function gradeSubmission(submissionId: string): Promise<Grade> {
+  assertGradingEnabled();
   const existing = grades.get(submissionId);
   if (existing) return existing; // write-once: same commit, same verdict
   const sub = submissions.get(submissionId);
