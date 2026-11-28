@@ -11,6 +11,17 @@
     # attribute; the shell itself must never be framed.
     -Server
   }
+  # Grading is disabled while the API's GRADING_ENABLED switch is off (the
+  # default). Belt and braces: even if the switch is flipped by mistake, the
+  # public proxy never forwards the grade route. Remove this block only when
+  # grading runs in an isolated sandbox (see docs/labs-platform/vps-deploy-notes.md).
+  @grade path_regexp ^/api/playgrounds/[^/]+/grade/?$
+  handle @grade {
+    respond `{"error":"grading is unavailable","code":"grading_disabled"}` 503 {
+      close
+    }
+  }
+
   reverse_proxy /api/* 127.0.0.1:3000
   reverse_proxy /ws/* 127.0.0.1:3000
   reverse_proxy /preview/* 127.0.0.1:3000

@@ -56,6 +56,7 @@ services:
       SEAT_DEFAULT_MODEL: ${SEAT_DEFAULT_MODEL:-opencode-go/muse-spark-1.3-contributor}
       ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in .env (protects kill switch / reconcile)}
       PREVIEW_SECRET: ${PREVIEW_SECRET:?set PREVIEW_SECRET in .env}
+      GRADING_ENABLED: ${GRADING_ENABLED:-0}   # off: grading would run check scripts on this host
       MAX_WORKSPACES_GLOBAL: ${MAX_WORKSPACES_GLOBAL:-20}
       MAX_WORKSPACES_PER_IP: ${MAX_WORKSPACES_PER_IP:-3}
       WORKSPACE_RESOLV_CONF: ${WORKSPACE_RESOLV_CONF:-}  # HOST path; required under gVisor (see vps-deploy-notes.md)
