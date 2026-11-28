@@ -2,6 +2,7 @@
   import "../../../app.css";
   import { page } from "$app/stores";
   import { onMount, onDestroy } from "svelte";
+  import { gradeMessage } from "$lib/grade";
   import { collectDropped, collectInput, describe as describeUpload, downloadUrl, upload } from "$lib/transfer";
   import { currentTheme, toggleTheme, type Theme } from "$lib/theme";
   import { env } from "$env/dynamic/public";
@@ -1009,10 +1010,8 @@
       body: JSON.stringify({ track: TRACK, step: steps[curStep].slug }),
     });
     try {
-      const body = await r.json();
-      gradeInfo = !r.ok ? body.error
-        : body.grade.pass ? `official: PASS ✓ · verdict ${body.grade.verdictHash.slice(0, 12)}`
-        : `official: FAIL — ${body.grade.failures.map((f: { hint: string }) => f.hint).join(" · ")} · ${body.grade.verdictHash.slice(0, 12)}`;
+      const body = await r.json().catch(() => null);
+      gradeInfo = gradeMessage(r.status, body);
     } finally {
       grading = false;
     }
