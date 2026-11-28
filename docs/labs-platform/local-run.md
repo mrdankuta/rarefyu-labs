@@ -23,3 +23,7 @@ Rebuild the image after pulling updates: `LABS_BUILD=1 scripts/labs-local.sh`.
 This is a convenience path, not an isolation guarantee for course authors: hosted
 labs additionally run under gVisor. Local mode does not include the web shell,
 grading or snapshots.
+
+## Grading switch
+
+"Submit for grade" is disabled unless `GRADING_ENABLED=1` is set for the API. Leave it unset for a normal run (the lab shows "Grading is unavailable right now"); set it only on your own machine if you are working on grading.
