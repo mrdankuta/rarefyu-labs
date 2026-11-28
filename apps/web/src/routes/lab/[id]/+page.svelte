@@ -1004,14 +1004,16 @@
     confirmGrade = false;
     grading = true;
     gradeInfo = "grading…";
-    const r = await fetch(`${API}/api/playgrounds/${id}/grade`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ track: TRACK, step: steps[curStep].slug }),
-    });
     try {
+      const r = await fetch(`${API}/api/playgrounds/${id}/grade`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ track: TRACK, step: steps[curStep].slug }),
+      });
       const body = await r.json().catch(() => null);
       gradeInfo = gradeMessage(r.status, body);
+    } catch {
+      gradeInfo = "Could not reach the server. Try again in a moment.";
     } finally {
       grading = false;
     }

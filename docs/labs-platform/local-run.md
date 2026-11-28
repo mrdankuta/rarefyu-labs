@@ -26,4 +26,4 @@ grading or snapshots.
 
 ## Grading switch
 
-"Submit for grade" is disabled unless `GRADING_ENABLED=1` is set for the API. Leave it unset for a normal run (the lab shows "Grading is unavailable right now"); set it only on your own machine if you are working on grading.
+`scripts/labs-local.sh` has no grading. When running the full stack (`bun run dev:api`), "Submit for grade" is disabled unless `GRADING_ENABLED=1` is set for the API; otherwise the lab shows "Grading is unavailable right now". Set it only on your own machine if you are working on grading.

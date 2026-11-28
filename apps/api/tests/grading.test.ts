@@ -108,7 +108,7 @@ describe("grading disabled (default)", () => {
     });
   }
 
-  test.each([undefined, "", "0", "false"])("GRADING_ENABLED=%p returns the disabled response", async (v) => {
+  test.each([undefined, "", "0", "false", "no", "off", "garbage", "2"])("GRADING_ENABLED=%p returns the disabled response", async (v) => {
     const id = await makePlayground("d1");
     if (v === undefined) delete process.env.GRADING_ENABLED;
     else process.env.GRADING_ENABLED = v;
@@ -136,9 +136,13 @@ describe("grading disabled (default)", () => {
   });
 
   test("direct grading calls refuse to run and create no work directory", async () => {
+    const root = `${process.env.PLAYGROUND_ROOT ?? "/tmp/labs-playgrounds"}/_grading`;
+    const before = await Array.fromAsync(new Bun.Glob("*").scan({ cwd: root, onlyFiles: false })).catch(() => []);
     delete process.env.GRADING_ENABLED;
     await expect(submitForGrading("nope", "demo-agent", "01-scaffold")).rejects.toThrow(/disabled/);
     await expect(gradeSubmission("nope")).rejects.toThrow(/disabled/);
+    const after = await Array.fromAsync(new Bun.Glob("*").scan({ cwd: root, onlyFiles: false })).catch(() => []);
+    expect(after).toEqual(before);
   });
 
   test("disabled response comes before any session lookup", async () => {

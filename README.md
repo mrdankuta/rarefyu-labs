@@ -27,4 +27,5 @@ Prefer your own machine? `scripts/labs-local.sh` runs the same lab in Docker (se
 
 Dev defaults to `DRIVER=local` (host processes, no isolation). Try containers
 with `DRIVER=docker bun run dev:api` after `docker build -t rarefyu/base-lab:dev images/base-lab`.
+Official lesson grading is off unless you start the API with `GRADING_ENABLED=1` (it runs check scripts on the API host, so never on a shared host).
 No KVM / nested virtualization is needed anywhere.
